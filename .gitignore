@@ -1,0 +1,12 @@
+.gradle/
+.idea/
+local.properties
+build/
+**/build/
+*.iml
+.research_upstream/
+.tools/
+.android-sdk/
+captures/
+app/release/
+dist/

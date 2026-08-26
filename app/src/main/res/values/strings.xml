@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Deep Cleaner</string>
+    <string name="widget_description">显示存储空间并快速启动扫描</string>
+</resources>
