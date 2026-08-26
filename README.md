@@ -84,10 +84,6 @@ app/src/main/java/com/kiowx/deepcleaner/
 └── DeepCleanerViewModel.kt
 ```
 
-## 社区与作者
-
-- QQ 交流群：670804369
-- 作者：[Kio](https://github.com/Kiowx)
 
 ## License
 
