@@ -1,8 +1,12 @@
 # Deep Cleaner
 
-<img width="1254" height="1254" alt="848daf0c-e01b-4551-8949-7e42f27860f6" src="https://github.com/user-attachments/assets/668c778f-dcb3-4aaf-8e32-514f943fedb7" />
+<p align="center">
+<img width="250" height="250" alt="848daf0c-e01b-4551-8949-7e42f27860f6" src="https://github.com/user-attachments/assets/668c778f-dcb3-4aaf-8e32-514f943fedb7" />
+</p>
 
 Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管理工具。扫描、分类、摘要计算和文件操作均在设备本地完成，不上传文件名、路径或内容。
+
+Windows版本：https://github.com/Kiowx/c_cleaner_plus
 
 ## 功能
 
