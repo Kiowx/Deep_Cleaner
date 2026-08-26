@@ -8,6 +8,8 @@ Deep Cleaner 是一款面向 Android 的本地深度清理与存储管理工具�
 
 Windows版本：https://github.com/Kiowx/c_cleaner_plus
 
+友情链接：[linuxdo](https://linux.do/)
+
 ## 功能
 
 ### 清理与空间管理
