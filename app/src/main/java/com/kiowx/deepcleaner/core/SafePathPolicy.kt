@@ -5,7 +5,6 @@ import java.io.File
 class SafePathPolicy(
     roots: List<File>,
     private val extraExcludedPaths: Set<String> = emptySet(),
-    private val allowAndroidMedia: Boolean = false,
 ) {
     private val canonicalRoots = roots.mapNotNull { it.safeCanonical() }.distinct()
     private val protectedNames = setOf("android", ".deepcleanertrash", "deepcleaneroptimized", "deepcleanerarchive")
@@ -18,10 +17,6 @@ class SafePathPolicy(
             if (canonical == root) "" else canonical.removePrefix("$root${File.separator}").takeIf { canonical.startsWith("$root${File.separator}") }
         } ?: return false
         val firstSegment = relative.substringBefore(File.separator).lowercase()
-        if (firstSegment == "android") {
-            val secondSegment = relative.substringAfter(File.separator, "").substringBefore(File.separator).lowercase()
-            return allowAndroidMedia && secondSegment == "media"
-        }
         return firstSegment !in protectedNames
     }
 

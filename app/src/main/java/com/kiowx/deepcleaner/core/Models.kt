@@ -5,8 +5,6 @@ import java.io.File
 enum class MainSection { HOME, CLEAN, TOOLS, APPS, SETTINGS }
 
 enum class ToolKind(val title: String, val subtitle: String) {
-    QQ_CLEANER("QQ 专清", "快速分类 QQ 缓存、媒体与接收文件"),
-    WECHAT_CLEANER("微信专清", "快速分类微信缓存、媒体与聊天文件"),
     STORAGE_ANALYZER("空间分析", "分类统计与目录占用排行"),
     SIMILAR_MEDIA("相似照片", "识别相似图、截图与模糊照片"),
     LARGE_FILES("大文件", "定位占用空间最多的文件"),
@@ -24,12 +22,6 @@ enum class ToolKind(val title: String, val subtitle: String) {
 }
 
 enum class CleanCategory(val title: String, val defaultSelected: Boolean) {
-    QQ_CACHE("QQ 缓存", true),
-    QQ_MEDIA("QQ 图片、视频与语音", false),
-    QQ_FILES("QQ 接收文件", false),
-    WECHAT_CACHE("微信缓存", true),
-    WECHAT_MEDIA("微信图片、视频与语音", false),
-    WECHAT_FILES("微信聊天文件", false),
     TEMPORARY("临时文件", true),
     THUMBNAILS("缩略图缓存", true),
     LOGS("日志与崩溃记录", true),

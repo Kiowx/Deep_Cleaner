@@ -14,7 +14,6 @@ class CleanerEngine(private val context: Context) {
     private val roots get() = StorageAccess.roots(context)
     private val whitelist = WhitelistRepository(context)
     private val policy get() = SafePathPolicy(roots, whitelist.pathEntries())
-    private val socialPolicy get() = SafePathPolicy(roots, whitelist.pathEntries(), allowAndroidMedia = true)
 
     suspend fun scanJunk(onProgress: suspend (ScanProgress) -> Unit = {}): ScanReport {
         val items = mutableListOf<CleanItem>()
@@ -223,8 +222,7 @@ class CleanerEngine(private val context: Context) {
         items.forEachIndexed { index, item ->
             currentCoroutineContext().ensureActive()
             val file = item.file
-            val deletePolicy = if (item.category.isSocialCategory()) socialPolicy else policy
-            val safe = deletePolicy.canDelete(file) && verifyCandidate(item)
+            val safe = policy.canDelete(file) && verifyCandidate(item)
             if (safe) {
                 val ok = when (mode) {
                     DeleteMode.TRASH -> trashManager.moveToTrash(file, item.size)
@@ -337,16 +335,10 @@ class CleanerEngine(private val context: Context) {
         duplicateReference = reference,
     )
 
-    private fun CleanCategory.isSocialCategory(): Boolean = this in SOCIAL_CATEGORIES
-
     private object EnvironmentDirectory { const val DOWNLOADS = "Download" }
 
     private companion object {
         const val QUICK_DIGEST_BYTES = 64 * 1024
-        val SOCIAL_CATEGORIES = setOf(
-            CleanCategory.QQ_CACHE, CleanCategory.QQ_MEDIA, CleanCategory.QQ_FILES,
-            CleanCategory.WECHAT_CACHE, CleanCategory.WECHAT_MEDIA, CleanCategory.WECHAT_FILES,
-        )
     }
 }
 

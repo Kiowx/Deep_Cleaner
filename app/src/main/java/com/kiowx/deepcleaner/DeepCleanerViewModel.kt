@@ -18,8 +18,6 @@ import com.kiowx.deepcleaner.core.MediaOptimizer
 import com.kiowx.deepcleaner.core.ScanProgress
 import com.kiowx.deepcleaner.core.ScanReport
 import com.kiowx.deepcleaner.core.ScheduleFrequency
-import com.kiowx.deepcleaner.core.SocialCleaner
-import com.kiowx.deepcleaner.core.SocialPlatform
 import com.kiowx.deepcleaner.core.StorageAccess
 import com.kiowx.deepcleaner.core.StorageSnapshot
 import com.kiowx.deepcleaner.core.StorageAnalysis
@@ -90,7 +88,6 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
     private val trashManager = TrashManager(application)
     private val appRepository = AppRepository(application)
     private val advancedScanner = AdvancedScanner(application)
-    private val socialCleaner = SocialCleaner(application)
     private val historyRepository = HistoryRepository(application)
     private val whitelistRepository = WhitelistRepository(application)
     private val safRepository = SafRepository(application)
@@ -174,8 +171,6 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         if (!requireStorageAccess()) return
         val tool = _state.value.activeTool ?: return
         when (tool) {
-            ToolKind.QQ_CLEANER -> runScan("正在扫描 QQ 文件") { socialCleaner.scan(SocialPlatform.QQ, it) }
-            ToolKind.WECHAT_CLEANER -> runScan("正在扫描微信文件") { socialCleaner.scan(SocialPlatform.WECHAT, it) }
             ToolKind.STORAGE_ANALYZER -> runStorageAnalysis()
             ToolKind.SIMILAR_MEDIA -> runScan("正在分析相似照片") { advancedScanner.scanSimilarMedia(it) }
             ToolKind.LARGE_FILES -> runScan("正在扫描大文件") { onProgress ->
