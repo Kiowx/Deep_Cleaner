@@ -44,7 +44,6 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 - 桌面小组件：显示存储使用率、可用空间并快速启动扫描
 - 自适应布局：手机使用底部导航，平板、折叠屏和桌面窗口使用侧边导航
 - Android 16：`compileSdk = 36`、`targetSdk = 36`、边到边布局和预测返回兼容
-- 私有缓存：Android 16 隔离其他应用的私有目录，相关清理由应用自身或系统存储页面完成
 
 ### 扫描性能
 
@@ -93,11 +92,6 @@ app/src/main/java/com/kiowx/deepcleaner/
 ├── MainActivity.kt
 └── DeepCleanerViewModel.kt
 ```
-
-## 社区与作者
-
-- QQ 交流群：670804369
-- 作者：[Kio](https://github.com/Kiowx)
 
 ## License
 
