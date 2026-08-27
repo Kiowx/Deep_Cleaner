@@ -14,11 +14,13 @@ class CleanerEngine(private val context: Context) {
     private val roots get() = StorageAccess.roots(context)
     private val whitelist = WhitelistRepository(context)
     private val policy get() = SafePathPolicy(roots, whitelist.pathEntries())
+    private val socialPolicy get() = SafePathPolicy(roots, whitelist.pathEntries(), allowAndroidMedia = true)
 
     suspend fun scanJunk(onProgress: suspend (ScanProgress) -> Unit = {}): ScanReport {
         val items = mutableListOf<CleanItem>()
         var files = 0L
         var bytes = 0L
+        var foundBytes = 0L
         var skipped = 0L
         var errors = 0L
         val elapsed = measureTimeMillis {
@@ -28,14 +30,16 @@ class CleanerEngine(private val context: Context) {
                     val size = file.length().coerceAtLeast(0)
                     bytes += size
                     FileClassifier.classify(file)?.let { match ->
-                        items += file.toItem(
+                        val item = file.toItem(
                             category = match.category,
                             reason = match.reason,
                             selected = match.safeByDefault,
                         )
+                        items += item
+                        foundBytes += item.size
                     }
                     if (files % 200L == 0L) {
-                        onProgress(ScanProgress(file.absolutePath, files, items.size, items.sumOf(CleanItem::size)))
+                        onProgress(ScanProgress(file.absolutePath, files, items.size, foundBytes))
                     }
                 },
                 onSkipped = { skipped++ },
@@ -55,6 +59,7 @@ class CleanerEngine(private val context: Context) {
         var bytes = 0L
         var skipped = 0L
         var errors = 0L
+        var foundBytes = 0L
         val elapsed = measureTimeMillis {
             walkFiles(
                 onFile = { file ->
@@ -62,10 +67,12 @@ class CleanerEngine(private val context: Context) {
                     val size = file.length().coerceAtLeast(0)
                     bytes += size
                     if (size >= minimumBytes) {
-                        found += file.toItem(CleanCategory.LARGE_FILE, "大于 ${formatBytes(minimumBytes)}", false)
-                        if (found.size > limit.coerceAtLeast(1)) found.poll()
+                        val item = file.toItem(CleanCategory.LARGE_FILE, "大于 ${formatBytes(minimumBytes)}", false)
+                        found += item
+                        foundBytes += item.size
+                        if (found.size > limit.coerceAtLeast(1)) found.poll()?.let { foundBytes -= it.size }
                     }
-                    if (files % 200L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, found.sumOf(CleanItem::size)))
+                    if (files % 200L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, foundBytes))
                 },
                 onSkipped = { skipped++ },
                 onError = { errors++ },
@@ -85,6 +92,7 @@ class CleanerEngine(private val context: Context) {
         var bytes = 0L
         var skipped = 0L
         var errors = 0L
+        var foundBytes = 0L
         val elapsed = measureTimeMillis {
             walkFiles(
                 scanRoots = downloadRoots,
@@ -95,9 +103,11 @@ class CleanerEngine(private val context: Context) {
                         val type = file.extension.ifBlank { "无扩展名" }.uppercase(Locale.ROOT)
                         val location = file.parentFile?.name.orEmpty()
                         val reason = if (FileClassifier.isInstaller(file)) "$type 安装包 · $location" else "$type · $location · 超过 $olderThanDays 天未修改"
-                        found += file.toItem(CleanCategory.DOWNLOAD, reason, false)
+                        val item = file.toItem(CleanCategory.DOWNLOAD, reason, false)
+                        found += item
+                        foundBytes += item.size
                     }
-                    if (files % 100L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, found.sumOf(CleanItem::size)))
+                    if (files % 100L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, foundBytes))
                 },
                 onSkipped = { skipped++ },
                 onError = { errors++ },
@@ -115,6 +125,7 @@ class CleanerEngine(private val context: Context) {
         var bytes = 0L
         var skipped = 0L
         var errors = 0L
+        var foundBytes = 0L
         val found = mutableListOf<CleanItem>()
         val elapsed = measureTimeMillis {
             walkFiles(
@@ -123,33 +134,46 @@ class CleanerEngine(private val context: Context) {
                     val size = file.length().coerceAtLeast(0)
                     bytes += size
                     if (size >= minimumBytes) bySize.getOrPut(size) { mutableListOf() } += file
-                    if (files % 250L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, found.sumOf(CleanItem::size)))
+                    if (files % 250L == 0L) onProgress(ScanProgress(file.absolutePath, files, found.size, foundBytes))
                 },
                 onSkipped = { skipped++ },
                 onError = { errors++ },
             )
-            var hashed = 0L
+            var checked = 0L
             bySize.values.asSequence().filter { it.size > 1 }.forEach { sameSize ->
                 currentCoroutineContext().ensureActive()
-                val byDigest = mutableMapOf<String, MutableList<File>>()
+                val byQuickDigest = mutableMapOf<String, MutableList<File>>()
                 sameSize.forEach { file ->
                     currentCoroutineContext().ensureActive()
-                    runCatching { stableDigest(file) }
-                        .onSuccess { digest -> byDigest.getOrPut(digest) { mutableListOf() } += file }
+                    runCatching { quickDigest(file) }
+                        .onSuccess { digest -> byQuickDigest.getOrPut(digest) { mutableListOf() } += file }
                         .onFailure { errors++ }
-                    hashed++
-                    if (hashed % 10L == 0L) onProgress(ScanProgress("正在校验：${file.name}", files, found.size, found.sumOf(CleanItem::size)))
+                    checked++
+                    if (checked % 25L == 0L) onProgress(ScanProgress("正在快速比对：${file.name}", files, found.size, foundBytes))
                 }
-                byDigest.filterValues { it.size > 1 }.forEach { (digest, group) ->
-                    val ordered = group.sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.absolutePath.length })
-                    ordered.drop(1).forEach { duplicate ->
-                        found += duplicate.toItem(
-                            category = CleanCategory.DUPLICATE,
-                            reason = "与保留副本 ${ordered.first().name} 内容一致",
-                            selected = true,
-                            group = digest.take(12),
-                            reference = ordered.first().absolutePath,
-                        )
+                byQuickDigest.values.asSequence().filter { it.size > 1 }.forEach { quickGroup ->
+                    val byDigest = mutableMapOf<String, MutableList<File>>()
+                    quickGroup.forEach { file ->
+                        currentCoroutineContext().ensureActive()
+                        runCatching { stableDigest(file) }
+                            .onSuccess { digest -> byDigest.getOrPut(digest) { mutableListOf() } += file }
+                            .onFailure { errors++ }
+                        checked++
+                        if (checked % 10L == 0L) onProgress(ScanProgress("正在完整校验：${file.name}", files, found.size, foundBytes))
+                    }
+                    byDigest.filterValues { it.size > 1 }.forEach { (digest, group) ->
+                        val ordered = group.sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.absolutePath.length })
+                        ordered.drop(1).forEach { duplicate ->
+                            val item = duplicate.toItem(
+                                category = CleanCategory.DUPLICATE,
+                                reason = "与保留副本 ${ordered.first().name} 内容一致",
+                                selected = true,
+                                group = digest.take(12),
+                                reference = ordered.first().absolutePath,
+                            )
+                            found += item
+                            foundBytes += item.size
+                        }
                     }
                 }
             }
@@ -169,9 +193,9 @@ class CleanerEngine(private val context: Context) {
                 currentCoroutineContext().ensureActive()
                 val dir = stack.removeLast()
                 directories += dir
-                val children = runCatching { dir.listFiles()?.toList().orEmpty() }
+                val children = runCatching { dir.listFiles().orEmpty() }
                     .onFailure { errors++ }
-                    .getOrDefault(emptyList())
+                    .getOrDefault(emptyArray())
                 children.filter { it.isDirectory && !Files.isSymbolicLink(it.toPath()) && policy.canScan(it) }.forEach(stack::add)
                 scanned++
                 if (scanned % 100L == 0L) onProgress(ScanProgress(dir.absolutePath, scanned, found.size, 0))
@@ -199,7 +223,8 @@ class CleanerEngine(private val context: Context) {
         items.forEachIndexed { index, item ->
             currentCoroutineContext().ensureActive()
             val file = item.file
-            val safe = policy.canDelete(file) && verifyCandidate(item)
+            val deletePolicy = if (item.category.isSocialCategory()) socialPolicy else policy
+            val safe = deletePolicy.canDelete(file) && verifyCandidate(item)
             if (safe) {
                 val ok = when (mode) {
                     DeleteMode.TRASH -> trashManager.moveToTrash(file, item.size)
@@ -246,9 +271,9 @@ class CleanerEngine(private val context: Context) {
         while (stack.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
             val current = stack.removeLast()
-            val children = runCatching { current.listFiles()?.toList().orEmpty() }
+            val children = runCatching { current.listFiles().orEmpty() }
                 .onFailure { onError() }
-                .getOrDefault(emptyList())
+                .getOrDefault(emptyArray())
             children.forEach { child ->
                 currentCoroutineContext().ensureActive()
                 when {
@@ -276,6 +301,23 @@ class CleanerEngine(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(Locale.ROOT, it) }
     }
 
+    private fun quickDigest(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(QUICK_DIGEST_BYTES)
+        file.inputStream().buffered().use { input ->
+            val count = input.read(buffer)
+            if (count > 0) digest.update(buffer, 0, count)
+        }
+        if (file.length() > QUICK_DIGEST_BYTES) {
+            java.io.RandomAccessFile(file, "r").use { input ->
+                input.seek((file.length() - QUICK_DIGEST_BYTES).coerceAtLeast(0))
+                val count = input.read(buffer)
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(Locale.ROOT, it) }
+    }
+
     private fun File.toItem(
         category: CleanCategory,
         reason: String,
@@ -295,7 +337,17 @@ class CleanerEngine(private val context: Context) {
         duplicateReference = reference,
     )
 
+    private fun CleanCategory.isSocialCategory(): Boolean = this in SOCIAL_CATEGORIES
+
     private object EnvironmentDirectory { const val DOWNLOADS = "Download" }
+
+    private companion object {
+        const val QUICK_DIGEST_BYTES = 64 * 1024
+        val SOCIAL_CATEGORIES = setOf(
+            CleanCategory.QQ_CACHE, CleanCategory.QQ_MEDIA, CleanCategory.QQ_FILES,
+            CleanCategory.WECHAT_CACHE, CleanCategory.WECHAT_MEDIA, CleanCategory.WECHAT_FILES,
+        )
+    }
 }
 
 data class DeleteResult(val deleted: Int, val failed: Int, val releasedBytes: Long)

@@ -234,13 +234,20 @@ class AdvancedScanner(private val context: Context) {
         val items = mutableListOf<CleanItem>()
         var scanned = 0L
         var bytes = 0L
+        var foundBytes = 0L
         var errors = 0L
         val elapsed = measureTimeMillis {
             walk { file ->
                 scanned++
                 bytes += file.length().coerceAtLeast(0)
-                runCatching { if (predicate(file)) items += file.toCleanItem(category, reason(file), false) }.onFailure { errors++ }
-                if (scanned % 200L == 0L) onProgress(ScanProgress(file.absolutePath, scanned, items.size, items.sumOf(CleanItem::size)))
+                runCatching {
+                    if (predicate(file)) {
+                        val item = file.toCleanItem(category, reason(file), false)
+                        items += item
+                        foundBytes += item.size
+                    }
+                }.onFailure { errors++ }
+                if (scanned % 250L == 0L) onProgress(ScanProgress(file.absolutePath, scanned, items.size, foundBytes))
             }
         }
         return ScanReport(items.sortedByDescending(CleanItem::size), scanned, bytes, 0, errors, elapsed)
@@ -251,7 +258,7 @@ class AdvancedScanner(private val context: Context) {
         while (stack.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
             val current = stack.removeLast()
-            val children = runCatching { current.listFiles()?.toList().orEmpty() }.getOrDefault(emptyList())
+            val children = runCatching { current.listFiles().orEmpty() }.getOrDefault(emptyArray())
             children.forEach { child ->
                 currentCoroutineContext().ensureActive()
                 when {

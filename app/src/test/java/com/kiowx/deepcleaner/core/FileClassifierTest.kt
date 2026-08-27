@@ -53,5 +53,19 @@ class FileClassifierTest {
         assertTrue(policy.canScan(file))
         assertTrue(policy.canDelete(file))
     }
-}
 
+    @Test
+    fun androidMediaRequiresExplicitPolicyButAndroidDataAlwaysStaysProtected() {
+        val root = temporary.newFolder("storage3")
+        val media = File(root, "Android/media/com.tencent.mm/cache/old.tmp").apply { parentFile?.mkdirs(); writeText("x") }
+        val privateData = File(root, "Android/data/com.tencent.mm/cache/old.tmp").apply { parentFile?.mkdirs(); writeText("x") }
+        val ordinaryPolicy = SafePathPolicy(listOf(root))
+        val socialPolicy = SafePathPolicy(listOf(root), allowAndroidMedia = true)
+
+        assertFalse(ordinaryPolicy.canScan(media))
+        assertTrue(socialPolicy.canScan(media))
+        assertTrue(socialPolicy.canDelete(media))
+        assertFalse(socialPolicy.canScan(privateData))
+        assertFalse(socialPolicy.canDelete(privateData))
+    }
+}

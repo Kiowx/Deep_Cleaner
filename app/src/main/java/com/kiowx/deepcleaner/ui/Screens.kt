@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.AutoDelete
 import androidx.compose.material.icons.rounded.Android
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FolderOff
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.History
@@ -196,6 +198,11 @@ fun HomeScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     CompactTool(Icons.Rounded.FolderOff, "空文件夹", WarmOrange, Modifier.weight(1f)) { onOpenTool(ToolKind.EMPTY_FOLDERS) }
                     CompactTool(Icons.Rounded.Download, "下载管理", Color(0xFF4C89E8), Modifier.weight(1f)) { onOpenTool(ToolKind.DOWNLOADS) }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CompactTool(Icons.AutoMirrored.Rounded.Chat, "QQ 专清", Color(0xFF168CF5), Modifier.weight(1f)) { onOpenTool(ToolKind.QQ_CLEANER) }
+                    CompactTool(Icons.Rounded.Forum, "微信专清", Color(0xFF07A85A), Modifier.weight(1f)) { onOpenTool(ToolKind.WECHAT_CLEANER) }
                 }
             }
         }
@@ -476,6 +483,10 @@ private fun ToolsOverview(modifier: Modifier, showTrash: Boolean, onOpen: (ToolK
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { BrandHeader("工具") }
+        item { SectionLabel("社交应用专清") }
+        item { ToolCard(Icons.AutoMirrored.Rounded.Chat, ToolKind.QQ_CLEANER.title, ToolKind.QQ_CLEANER.subtitle, Color(0xFF168CF5)) { onOpen(ToolKind.QQ_CLEANER) } }
+        item { ToolCard(Icons.Rounded.Forum, ToolKind.WECHAT_CLEANER.title, ToolKind.WECHAT_CLEANER.subtitle, Color(0xFF07A85A)) { onOpen(ToolKind.WECHAT_CLEANER) } }
+        item { SectionLabel("存储与文件") }
         item { ToolCard(Icons.Rounded.PieChart, ToolKind.STORAGE_ANALYZER.title, ToolKind.STORAGE_ANALYZER.subtitle, Color(0xFF2563EB)) { onOpen(ToolKind.STORAGE_ANALYZER) } }
         item { ToolCard(Icons.Rounded.ImageSearch, ToolKind.SIMILAR_MEDIA.title, ToolKind.SIMILAR_MEDIA.subtitle, Color(0xFF7C3AED)) { onOpen(ToolKind.SIMILAR_MEDIA) } }
         item { ToolCard(Icons.Rounded.Storage, ToolKind.LARGE_FILES.title, ToolKind.LARGE_FILES.subtitle, AquaBlue) { onOpen(ToolKind.LARGE_FILES) } }
@@ -591,6 +602,8 @@ private fun ToolDetailScreen(
 }
 
 private fun toolIcon(tool: ToolKind): ImageVector = when (tool) {
+    ToolKind.QQ_CLEANER -> Icons.AutoMirrored.Rounded.Chat
+    ToolKind.WECHAT_CLEANER -> Icons.Rounded.Forum
     ToolKind.STORAGE_ANALYZER -> Icons.Rounded.PieChart
     ToolKind.SIMILAR_MEDIA -> Icons.Rounded.ImageSearch
     ToolKind.LARGE_FILES -> Icons.Rounded.Storage
