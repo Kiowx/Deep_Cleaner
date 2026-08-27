@@ -81,11 +81,12 @@ internal object UpdateManifestParser {
 class AppUpdateRepository(private val context: Context) {
     companion object {
         const val UPDATE_MANIFEST_URL =
-            "https://github.com/Kiowx/Deep_Cleaner/releases/latest/download/update.json"
+            "https://raw.githubusercontent.com/Kiowx/Deep_Cleaner/main/update/update.json"
         const val MAX_MANIFEST_BYTES = 262_144
         private const val MAX_APK_BYTES = 300L * 1024 * 1024
         private val allowedDownloadHosts = setOf(
             "github.com",
+            "raw.githubusercontent.com",
             "objects.githubusercontent.com",
             "release-assets.githubusercontent.com",
         )
@@ -202,10 +203,12 @@ class AppUpdateRepository(private val context: Context) {
             require(current.host.lowercase() in allowedDownloadHosts) { "更新下载域名不受信任" }
             val connection = (current.openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
+                useCaches = false
                 connectTimeout = 15_000
                 readTimeout = 45_000
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json, application/vnd.android.package-archive, application/octet-stream")
+                setRequestProperty("Cache-Control", "no-cache")
                 setRequestProperty("User-Agent", "Deep-Cleaner-Android/${currentVersionName}")
             }
             when (connection.responseCode) {

@@ -13,7 +13,7 @@ class AppUpdateRepositoryTest {
           "versionCode": 5,
           "versionName": "1.2.0",
           "minSdk": 26,
-          "apkUrl": "https://github.com/Kiowx/Deep_Cleaner/releases/download/v1.2.0/Deep-Cleaner-1.2.0-Android16-release.apk",
+          "apkUrl": "https://github.com/Kiowx/Deep_Cleaner/releases/download/v1.2.0/Deep-Cleaner-1.2.0-release.apk",
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "changelog": ["新增自动更新", "修复扫描问题"],
           "mandatory": false

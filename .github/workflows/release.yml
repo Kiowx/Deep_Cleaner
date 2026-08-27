@@ -152,9 +152,35 @@ jobs:
           fi
 
           printf '%s\n' "${raw_notes}" | sed '/^[[:space:]]*$/d' > dist/release-notes.md
-          awk '/^[[:space:]]*---[[:space:]]*$/ {exit} {print}' dist/release-notes.md \
-            | sed -E 's/^[[:space:]]*[-*][[:space:]]+//; /^[[:space:]]*$/d' \
-            | head -n 12 > dist/update-notes.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          source_lines = Path("dist/release-notes.md").read_text(encoding="utf-8").splitlines()
+          primary_lines: list[str] = []
+          for line in source_lines:
+              if line.strip() == "---":
+                  break
+              primary_lines.append(line)
+
+          bullet_pattern = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+          update_notes = [
+              match.group(1)
+              for line in primary_lines
+              if (match := bullet_pattern.match(line))
+          ]
+          if not update_notes:
+              update_notes = [
+                  line.strip()
+                  for line in primary_lines
+                  if line.strip() and not line.lstrip().startswith("#")
+              ]
+
+          Path("dist/update-notes.txt").write_text(
+              "\n".join(update_notes[:12]) + ("\n" if update_notes else ""),
+              encoding="utf-8",
+          )
+          PY
           if [[ ! -s dist/update-notes.txt ]]; then
             printf '修复问题并提升使用体验。\n' > dist/update-notes.txt
           fi
@@ -213,7 +239,6 @@ jobs:
           assets=(
             "dist/${APK_NAME}"
             "dist/${APK_NAME}.sha256"
-            "dist/update.json"
           )
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
@@ -229,3 +254,24 @@ jobs:
               --notes-file dist/release-notes.md \
               "${release_flags[@]}"
           fi
+
+      - name: Update repository manifest
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          mkdir -p update
+          cp dist/update.json update/update.json
+          git add update/update.json
+          if git diff --cached --quiet; then
+            echo "update/update.json is already current."
+            exit 0
+          fi
+          git commit -m "chore: 更新 ${VERSION_NAME} 自动更新清单"
+          git push origin main

@@ -59,7 +59,7 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 - 配置备份：导入或导出自定义规则、保护名单和主要设置
 - Root 全局模式：默认关闭；在设置中开启并授权后，智能扫描和自动任务会扩展到应用私有缓存
 - 签名规则更新：从项目仓库下载规则，并使用内置 RSA 公钥验证签名后启用
-- 应用更新：仅在软件启动时或设置页手动触发检查；从 GitHub Release 读取 `update.json`，下载后校验 SHA-256、应用 ID 和版本号，再交给 Android 系统安装器确认
+- 应用更新：仅在软件启动时或设置页手动触发检查；从项目仓库读取远程 `update/update.json`，下载后校验 SHA-256、应用 ID 和版本号，再交给 Android 系统安装器确认
 - 小组件增强：显示最近一次发现的可清理空间，并提供一键安全扫描
 - 自适应布局：手机使用底部导航，平板、折叠屏和桌面窗口使用侧边导航
 - Android 16：`compileSdk = 36`、`targetSdk = 36`、边到边布局和预测返回兼容
@@ -110,9 +110,9 @@ app/build/outputs/apk/release/app-release.apk
 
 1. 单元测试、Lint 和 Release 构建。
 2. 使用仓库 Secrets 中的固定生产密钥签名 APK。
-3. 生成 APK SHA-256 和 `update.json`。
+3. 生成 APK SHA-256 和 `update.json`，并将更新清单提交到仓库的 `update/update.json`。
 4. 获取最新提交的正文，完整同步到 GitHub Release，并将正文中 `---` 之前的精简条目同步到 `update.json`。
-5. 创建或更新 GitHub Release，并上传 APK、校验文件及更新配置。
+5. 创建或更新 GitHub Release，Release 仅上传 APK 和 SHA-256 校验文件。
 
 提交信息建议使用以下格式；没有正文时会回退使用提交标题，手动运行工作流也可以直接填写发布说明：
 
@@ -138,7 +138,7 @@ feat: release 1.2.0
 应用使用以下固定地址获取最新版 JSON：
 
 ```text
-https://github.com/Kiowx/Deep_Cleaner/releases/latest/download/update.json
+https://raw.githubusercontent.com/Kiowx/Deep_Cleaner/main/update/update.json
 ```
 
 JSON 示例见 `update/update.example.json`，实际文件由 `tools/generate_update_manifest.py` 自动生成。自动检查默认开启，但每次应用进程启动最多检查一次；不会创建后台更新任务。手动检查入口位于设置页。

@@ -56,7 +56,10 @@ class ExpansionFeaturesTest {
     fun bundledRemoteRulesHaveValidSignature() {
         val project = File(requireNotNull(System.getProperty("user.dir")))
         val rulesDirectory = listOf(File(project, "rules"), File(project, "../rules")).first(File::isDirectory)
-        val payload = File(rulesDirectory, "clean-rules.json").readBytes()
+        val payload = File(rulesDirectory, "clean-rules.json")
+            .readText(Charsets.UTF_8)
+            .replace("\r\n", "\n")
+            .toByteArray(Charsets.UTF_8)
         val signature = File(rulesDirectory, "clean-rules.json.sig").readText().trim()
         assertTrue(SignedRuleVerifier.verify(payload, signature, RuleUpdateRepository.PUBLIC_KEY_BASE64))
         assertFalse(SignedRuleVerifier.verify(payload + 0, signature, RuleUpdateRepository.PUBLIC_KEY_BASE64))
