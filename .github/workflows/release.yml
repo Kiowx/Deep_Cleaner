@@ -146,6 +146,10 @@ jobs:
           if [[ -z "$(printf '%s' "${raw_notes}" | tr -d '[:space:]')" ]]; then
             raw_notes="修复问题并提升使用体验。"
           fi
+          if ! printf '%s' "${raw_notes}" | grep -q '[一-龥]'; then
+            echo "Release notes must contain Chinese text. Write the latest commit body in Chinese or provide a Chinese manual changelog." >&2
+            exit 1
+          fi
 
           printf '%s\n' "${raw_notes}" | sed '/^[[:space:]]*$/d' > dist/release-notes.md
           awk '/^[[:space:]]*---[[:space:]]*$/ {exit} {print}' dist/release-notes.md \
