@@ -96,8 +96,10 @@ class AdvancedScanner(private val context: Context) {
         }
         val groups = fingerprints.indices.groupBy(::root).values.filter { it.size > 1 }
         val items = mutableListOf<CleanItem>()
+        val groupedPaths = mutableSetOf<String>()
         groups.forEachIndexed { groupIndex, indices ->
             val members = indices.map(fingerprints::get)
+            groupedPaths += members.map { it.file.absolutePath }
             val keep = members.maxWithOrNull(compareBy<MediaFingerprint> { it.sharpness }.thenBy { it.file.length() }) ?: return@forEachIndexed
             members.filterNot { it.file == keep.file }.forEach { media ->
                 val screenshot = media.file.absolutePath.contains("screenshot", true) || media.file.name.contains("截屏") || media.file.name.contains("截图")
@@ -110,7 +112,17 @@ class AdvancedScanner(private val context: Context) {
                 items += media.file.toCleanItem(CleanCategory.SIMILAR_MEDIA, reason, selected = false, group = "similar-$groupIndex", reference = keep.file.absolutePath)
             }
         }
-        return ScanReport(items.sortedByDescending(CleanItem::size), scanned, bytes, 0, errors, elapsed)
+        fingerprints.asSequence().filterNot { it.file.absolutePath in groupedPaths }.forEach { media ->
+            val normalized = media.file.name.lowercase(Locale.ROOT)
+            val reason = when {
+                media.averageLuma < 30 -> "画面整体过暗，建议预览确认"
+                media.sharpness < 320 -> "清晰度较低，可能是模糊照片"
+                normalized.contains("burst") || normalized.contains("连拍") -> "检测到连拍命名，可与同组照片比较后整理"
+                else -> return@forEach
+            }
+            items += media.file.toCleanItem(CleanCategory.SIMILAR_MEDIA, reason, selected = false)
+        }
+        return ScanReport(items.distinctBy(CleanItem::id).sortedByDescending(CleanItem::size), scanned, bytes, 0, errors, elapsed)
     }
 
     suspend fun scanMediaForOptimization(onProgress: suspend (ScanProgress) -> Unit = {}): ScanReport = scanByPredicate(
@@ -302,7 +314,8 @@ class AdvancedScanner(private val context: Context) {
         }
         tiny.recycle()
         if (bitmap !== tiny) bitmap.recycle()
-        return MediaFingerprint(file, hash, sharpness, bounds.outWidth, bounds.outHeight, luma)
+        val averageLuma = luma.sumOf { it.toInt() and 0xff }.toDouble() / luma.size
+        return MediaFingerprint(file, hash, sharpness, bounds.outWidth, bounds.outHeight, luma, averageLuma)
     }
 
     private fun luminance(pixel: Int): Int = ((android.graphics.Color.red(pixel) * 299 + android.graphics.Color.green(pixel) * 587 + android.graphics.Color.blue(pixel) * 114) / 1000)
@@ -346,6 +359,7 @@ class AdvancedScanner(private val context: Context) {
         val width: Int,
         val height: Int,
         val luma: ByteArray,
+        val averageLuma: Double,
     )
     private data class ApkInfo(
         val packageName: String,

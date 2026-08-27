@@ -39,6 +39,15 @@
             android:text="可用 0 B"
             android:textColor="#CFE1FF"
             android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/widget_cleanable"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="上次发现 0 B 可清理"
+            android:textColor="#CFE1FF"
+            android:textSize="11sp" />
     </LinearLayout>
 
     <TextView
@@ -48,7 +57,7 @@
         android:background="@drawable/widget_button"
         android:gravity="center"
         android:paddingHorizontal="18dp"
-        android:text="扫描"
+        android:text="安全扫描"
         android:textColor="#12356A"
         android:textSize="15sp"
         android:textStyle="bold" />

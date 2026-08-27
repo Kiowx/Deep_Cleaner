@@ -12,6 +12,8 @@ import com.kiowx.deepcleaner.DeepCleanerApp
 import com.kiowx.deepcleaner.R
 import com.kiowx.deepcleaner.core.AppPreferences
 import com.kiowx.deepcleaner.core.CleanerEngine
+import com.kiowx.deepcleaner.core.CleanProfile
+import com.kiowx.deepcleaner.core.CleanRisk
 import com.kiowx.deepcleaner.core.StorageAccess
 import com.kiowx.deepcleaner.core.TrashManager
 import com.kiowx.deepcleaner.core.formatBytes
@@ -28,20 +30,27 @@ class AutoCleanWorker(
             val storage = StorageAccess.snapshot(applicationContext)
             val usedPercent = (storage.usedFraction * 100).toInt()
             if (usedPercent < preferences.scheduleStorageThreshold) return@runCatching Result.success()
-            val report = CleanerEngine(applicationContext).scanJunk()
+            val engine = CleanerEngine(applicationContext)
+            val baseReport = when (preferences.cleanProfile) {
+                CleanProfile.DOWNLOADS_ONLY -> engine.scanDownloads()
+                else -> engine.scanJunk()
+            }
+            val report = if (preferences.cleanProfile == CleanProfile.MAX_SPACE) {
+                baseReport.copy(items = baseReport.items.map { item -> item.copy(selected = item.risk != CleanRisk.HIGH) })
+            } else baseReport
             val selected = report.items.filter { it.selected }
             if (preferences.scheduleScanOnly) {
                 showNotification("自动扫描完成", "发现 ${selected.size} 项，共 ${formatBytes(selected.sumOf { it.size })}")
                 return@runCatching Result.success()
             }
-            val result = CleanerEngine(applicationContext).deleteItems(
+            val result = engine.deleteItems(
                 selected,
                 preferences.deleteMode,
                 TrashManager(applicationContext),
             )
             preferences.lastCleanedBytes = result.releasedBytes
             preferences.lastCleanedAt = System.currentTimeMillis()
-            HistoryRepository(applicationContext).record("自动清理", result, preferences.deleteMode)
+            HistoryRepository(applicationContext).record("自动清理 · ${preferences.cleanProfile.title}", result, preferences.deleteMode, selected)
             TrashManager(applicationContext).prune(preferences.trashRetentionDays, preferences.trashMaxMb * 1024L * 1024L)
             showNotification("自动清理完成", "已处理 ${result.deleted} 项，释放 ${formatBytes(result.releasedBytes)}")
             Result.success()

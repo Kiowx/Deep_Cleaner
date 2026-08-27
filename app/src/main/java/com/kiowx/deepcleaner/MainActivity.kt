@@ -44,9 +44,15 @@ class MainActivity : ComponentActivity() {
             viewModel.runQuickScan()
             intent.action = null
         }
+        if (intent?.action == ACTION_SAFE_SCAN && ::viewModel.isInitialized) {
+            viewModel.selectSection(com.kiowx.deepcleaner.core.MainSection.CLEAN)
+            viewModel.runSafeScan()
+            intent.action = null
+        }
     }
 
     companion object {
         const val ACTION_QUICK_SCAN = "com.kiowx.deepcleaner.action.QUICK_SCAN"
+        const val ACTION_SAFE_SCAN = "com.kiowx.deepcleaner.action.SAFE_SCAN"
     }
 }

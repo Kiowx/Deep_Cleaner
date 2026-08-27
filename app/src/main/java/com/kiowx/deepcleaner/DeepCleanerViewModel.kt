@@ -9,9 +9,14 @@ import com.kiowx.deepcleaner.core.AppPreferences
 import com.kiowx.deepcleaner.core.AppRepository
 import com.kiowx.deepcleaner.core.AdvancedScanner
 import com.kiowx.deepcleaner.core.CleanItem
+import com.kiowx.deepcleaner.core.CleanProfile
 import com.kiowx.deepcleaner.core.CleanerEngine
 import com.kiowx.deepcleaner.core.CleanHistoryRecord
 import com.kiowx.deepcleaner.core.DeleteMode
+import com.kiowx.deepcleaner.core.CustomCleanRule
+import com.kiowx.deepcleaner.core.CustomRuleRepository
+import com.kiowx.deepcleaner.core.ConfigRepository
+import com.kiowx.deepcleaner.core.ExpansionScanner
 import com.kiowx.deepcleaner.core.MainSection
 import com.kiowx.deepcleaner.core.HistoryRepository
 import com.kiowx.deepcleaner.core.MediaOptimizer
@@ -21,10 +26,17 @@ import com.kiowx.deepcleaner.core.ScheduleFrequency
 import com.kiowx.deepcleaner.core.StorageAccess
 import com.kiowx.deepcleaner.core.StorageSnapshot
 import com.kiowx.deepcleaner.core.StorageAnalysis
+import com.kiowx.deepcleaner.core.StorageTrendPoint
+import com.kiowx.deepcleaner.core.StorageTrendRepository
 import com.kiowx.deepcleaner.core.ThemeMode
 import com.kiowx.deepcleaner.core.ToolKind
 import com.kiowx.deepcleaner.core.TrashManager
 import com.kiowx.deepcleaner.core.TrashRecord
+import com.kiowx.deepcleaner.core.VaultEntry
+import com.kiowx.deepcleaner.core.VaultRepository
+import com.kiowx.deepcleaner.core.RootAccess
+import com.kiowx.deepcleaner.core.RuleUpdateInfo
+import com.kiowx.deepcleaner.core.RuleUpdateRepository
 import com.kiowx.deepcleaner.core.SafRepository
 import com.kiowx.deepcleaner.core.SafRoot
 import com.kiowx.deepcleaner.core.WhitelistEntry
@@ -61,6 +73,13 @@ data class DeepCleanerUiState(
     val whitelist: List<WhitelistEntry> = emptyList(),
     val safRoots: List<SafRoot> = emptyList(),
     val safAnalysis: StorageAnalysis? = null,
+    val customRules: List<CustomCleanRule> = emptyList(),
+    val storageTrends: List<StorageTrendPoint> = emptyList(),
+    val vaultEntries: List<VaultEntry> = emptyList(),
+    val ruleUpdateInfo: RuleUpdateInfo = RuleUpdateInfo(),
+    val cleanProfile: CleanProfile = CleanProfile.SAFE,
+    val rootModeEnabled: Boolean = false,
+    val rootAvailable: Boolean? = null,
     val hasUsageAccess: Boolean = false,
     val message: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -88,10 +107,16 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
     private val trashManager = TrashManager(application)
     private val appRepository = AppRepository(application)
     private val advancedScanner = AdvancedScanner(application)
+    private val expansionScanner = ExpansionScanner(application)
     private val historyRepository = HistoryRepository(application)
     private val whitelistRepository = WhitelistRepository(application)
     private val safRepository = SafRepository(application)
     private val mediaOptimizer = MediaOptimizer(application)
+    private val customRuleRepository = CustomRuleRepository(application)
+    private val trendRepository = StorageTrendRepository(application)
+    private val vaultRepository = VaultRepository(application)
+    private val configRepository = ConfigRepository(application)
+    private val ruleUpdateRepository = RuleUpdateRepository(application)
     private var activeJob: Job? = null
 
     private val _state = MutableStateFlow(
@@ -116,12 +141,20 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
             history = historyRepository.list(),
             whitelist = whitelistRepository.list(),
             safRoots = safRepository.roots(),
+            customRules = customRuleRepository.list(),
+            storageTrends = trendRepository.list(),
+            vaultEntries = vaultRepository.list(),
+            ruleUpdateInfo = ruleUpdateRepository.info(),
+            cleanProfile = preferences.cleanProfile,
+            rootModeEnabled = preferences.rootModeEnabled,
             hasUsageAccess = appRepository.hasUsageAccess(),
         ),
     )
     val state: StateFlow<DeepCleanerUiState> = _state.asStateFlow()
 
     init {
+        trendRepository.record(_state.value.storage)
+        _state.update { it.copy(storageTrends = trendRepository.list()) }
         viewModelScope.launch(Dispatchers.IO) {
             val result = trashManager.prune(preferences.trashRetentionDays, preferences.trashMaxMb * 1024L * 1024L)
             if (result.deleted > 0) {
@@ -134,9 +167,12 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         val usageGranted = appRepository.hasUsageAccess()
         val usageChanged = usageGranted && !_state.value.hasUsageAccess
         _state.update {
+            val snapshot = StorageAccess.snapshot(getApplication())
+            trendRepository.record(snapshot)
             it.copy(
                 hasStorageAccess = StorageAccess.hasAllFilesAccess(),
-                storage = StorageAccess.snapshot(getApplication()),
+                storage = snapshot,
+                storageTrends = trendRepository.list(),
                 hasUsageAccess = usageGranted,
             )
         }
@@ -155,6 +191,11 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         if (tool == ToolKind.HISTORY) _state.update { it.copy(history = historyRepository.list()) }
         if (tool == ToolKind.WHITELIST) _state.update { it.copy(whitelist = whitelistRepository.list()) }
         if (tool == ToolKind.EXTERNAL_STORAGE) _state.update { it.copy(safRoots = safRepository.roots(), safAnalysis = null) }
+        if (tool == ToolKind.CUSTOM_RULES) _state.update { it.copy(customRules = customRuleRepository.list()) }
+        if (tool == ToolKind.STORAGE_TRENDS) _state.update { it.copy(storageTrends = trendRepository.list()) }
+        if (tool == ToolKind.VAULT) _state.update { it.copy(vaultEntries = vaultRepository.list()) }
+        if (tool == ToolKind.RULE_UPDATES) _state.update { it.copy(ruleUpdateInfo = ruleUpdateRepository.info()) }
+        if (tool == ToolKind.ROOT_CLEANER && _state.value.rootAvailable == null) checkRootAccess()
     }
 
     fun closeTool() {
@@ -164,25 +205,54 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun runQuickScan() {
         if (!requireStorageAccess()) return
-        runScan("正在深度扫描") { onProgress -> engine.scanJunk(onProgress) }
+        when (_state.value.cleanProfile) {
+            CleanProfile.DOWNLOADS_ONLY -> runScan("正在整理下载") { engine.scanDownloads(onProgress = it) }
+            CleanProfile.SAFE -> runScan("正在深度扫描") { onProgress -> engine.scanJunk(onProgress) }
+            CleanProfile.MAX_SPACE -> runScan("正在扫描最大释放方案") { onProgress ->
+                val report = engine.scanJunk(onProgress)
+                report.copy(items = report.items.map { item -> item.copy(selected = item.risk != com.kiowx.deepcleaner.core.CleanRisk.HIGH) })
+            }
+        }
+    }
+
+    fun runSafeScan() {
+        if (!requireStorageAccess()) return
+        runScan("正在执行安全扫描") { onProgress -> engine.scanJunk(onProgress) }
     }
 
     fun runActiveTool() {
-        if (!requireStorageAccess()) return
         val tool = _state.value.activeTool ?: return
+        if (tool == ToolKind.ROOT_CLEANER) {
+            if (!_state.value.rootModeEnabled) return postMessage("请先开启 Root 高级模式")
+            runScan("正在读取 Root 私有缓存") { RootAccess.scanCaches(getApplication()) }
+            return
+        }
+        if (tool in setOf(ToolKind.CLEAN_PROFILES, ToolKind.STORAGE_TRENDS, ToolKind.VAULT, ToolKind.CONFIG_BACKUP, ToolKind.RULE_UPDATES)) return
+        if (!requireStorageAccess()) return
         when (tool) {
             ToolKind.STORAGE_ANALYZER -> runStorageAnalysis()
             ToolKind.SIMILAR_MEDIA -> runScan("正在分析相似照片") { advancedScanner.scanSimilarMedia(it) }
+            ToolKind.MEDIA_COLLECTIONS -> runScan("正在整理截图与录屏") { expansionScanner.scanScreenMedia(it) }
+            ToolKind.VIDEO_DUPLICATES -> runScan("正在校验重复视频") { expansionScanner.scanDuplicateVideos(it) }
             ToolKind.LARGE_FILES -> runScan("正在扫描大文件") { onProgress ->
                 engine.scanLargeFiles(_state.value.largeFileMb * 1024L * 1024L, onProgress = onProgress)
             }
             ToolKind.DUPLICATES -> runScan("正在校验重复文件") { engine.scanDuplicates(onProgress = it) }
-            ToolKind.EMPTY_FOLDERS -> runScan("正在扫描空文件夹") { engine.scanEmptyFolders(it) }
+            ToolKind.EMPTY_FOLDERS -> runScan("正在检查空目录与残留") {
+                ExpansionScanner.mergeReports(engine.scanEmptyFolders(it), expansionScanner.scanResiduals(it))
+            }
             ToolKind.DOWNLOADS -> runScan("正在整理下载目录") { engine.scanDownloads(onProgress = it) }
+            ToolKind.ARCHIVE_MANAGER -> runScan("正在检查压缩包") { expansionScanner.scanArchives(it) }
+            ToolKind.FILE_TIMELINE -> runScan("正在建立文件时间线") { expansionScanner.scanTimeline(it) }
             ToolKind.MEDIA_OPTIMIZER -> runScan("正在查找可压缩媒体") { advancedScanner.scanMediaForOptimization(it) }
             ToolKind.APK_MANAGER -> runScan("正在分析安装包") { advancedScanner.scanApkArchives(it) }
             ToolKind.PRIVACY_SCAN -> runScan("正在检查隐私残留") { advancedScanner.scanPrivacyRisks(it) }
-            ToolKind.WHITELIST, ToolKind.HISTORY, ToolKind.EXTERNAL_STORAGE, ToolKind.SYSTEM_CACHE -> Unit
+            ToolKind.CUSTOM_RULES -> runScan("正在执行自定义规则") {
+                expansionScanner.scanCustomRules(customRuleRepository.list() + ruleUpdateRepository.rules(), it)
+            }
+            ToolKind.WHITELIST, ToolKind.HISTORY, ToolKind.EXTERNAL_STORAGE, ToolKind.SYSTEM_CACHE,
+            ToolKind.CLEAN_PROFILES, ToolKind.STORAGE_TRENDS, ToolKind.VAULT, ToolKind.CONFIG_BACKUP,
+            ToolKind.RULE_UPDATES, ToolKind.ROOT_CLEANER -> Unit
             ToolKind.TRASH -> refreshTrash()
         }
     }
@@ -216,6 +286,8 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                     block { progress -> _state.update { it.copy(progress = progress) } }
                 }
                 _state.update {
+                    preferences.lastScanBytes = report.items.sumOf(CleanItem::size)
+                    preferences.lastScanAt = System.currentTimeMillis()
                     it.copy(
                         isBusy = false,
                         items = report.items,
@@ -224,6 +296,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                         message = if (report.items.isEmpty()) "扫描完成，暂未发现可处理项目" else "发现 ${report.items.size} 项，共 ${formatBytes(report.items.sumOf(CleanItem::size))}",
                     )
                 }
+                CleanerWidgetProvider.updateAll(getApplication())
             } catch (_: CancellationException) {
                 _state.update { it.copy(isBusy = false, message = "操作已停止") }
             } catch (error: Throwable) {
@@ -262,6 +335,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         activeJob = viewModelScope.launch {
             try {
                 val mode = _state.value.deleteMode
+                val started = System.currentTimeMillis()
                 val result = withContext(Dispatchers.IO) {
                     engine.deleteItems(selected, mode, trashManager) { done, total, current ->
                         _state.update {
@@ -271,8 +345,15 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 preferences.lastCleanedBytes = result.releasedBytes
                 preferences.lastCleanedAt = System.currentTimeMillis()
-                historyRepository.record(_state.value.activeTool?.title ?: "智能清理", result, mode)
+                historyRepository.record(
+                    _state.value.activeTool?.title ?: _state.value.cleanProfile.title,
+                    result,
+                    mode,
+                    selected,
+                    System.currentTimeMillis() - started,
+                )
                 trashManager.prune(preferences.trashRetentionDays, preferences.trashMaxMb * 1024L * 1024L)
+                trendRepository.record(StorageAccess.snapshot(getApplication()))
                 _state.update { state ->
                     state.copy(
                         isBusy = false,
@@ -282,6 +363,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                         lastCleanedBytes = result.releasedBytes,
                         lastCleanedAt = preferences.lastCleanedAt,
                         history = historyRepository.list(),
+                        storageTrends = trendRepository.list(),
                         message = "已处理 ${result.deleted} 项，释放 ${formatBytes(result.releasedBytes)}" +
                             if (result.failed > 0) "，${result.failed} 项因安全复核失败而跳过" else "",
                     )
@@ -361,6 +443,116 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
     fun clearHistory() {
         historyRepository.clear()
         _state.update { it.copy(history = emptyList(), message = "清理历史已清空") }
+    }
+
+    fun addCustomRule(name: String, path: String, extensions: String, minimumMb: Int, olderDays: Int, safe: Boolean) {
+        val added = customRuleRepository.add(name, path, extensions, minimumMb, olderDays, safe)
+        _state.update { it.copy(customRules = customRuleRepository.list(), message = if (added == null) "规则至少需要路径或扩展名条件" else "已添加规则 ${added.name}") }
+    }
+
+    fun setCustomRuleEnabled(id: String, enabled: Boolean) {
+        customRuleRepository.setEnabled(id, enabled)
+        _state.update { it.copy(customRules = customRuleRepository.list()) }
+    }
+
+    fun removeCustomRule(id: String) {
+        customRuleRepository.remove(id)
+        _state.update { it.copy(customRules = customRuleRepository.list(), message = "规则已删除") }
+    }
+
+    fun setCleanProfile(profile: CleanProfile) {
+        preferences.cleanProfile = profile
+        _state.update { it.copy(cleanProfile = profile, message = "已切换到${profile.title}") }
+    }
+
+    fun setRootMode(enabled: Boolean) {
+        preferences.rootModeEnabled = enabled
+        _state.update { it.copy(rootModeEnabled = enabled) }
+        if (enabled) checkRootAccess()
+    }
+
+    fun checkRootAccess() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val available = RootAccess.isAvailable()
+            _state.update { it.copy(rootAvailable = available, message = if (available) "Root 授权可用" else "未获得 Root 授权") }
+        }
+    }
+
+    fun clearStorageTrends() {
+        trendRepository.clear()
+        trendRepository.record(StorageAccess.snapshot(getApplication()))
+        _state.update { it.copy(storageTrends = trendRepository.list(), message = "存储趋势已重置") }
+    }
+
+    fun importVaultFile(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { vaultRepository.import(uri) }
+            _state.update { it.copy(vaultEntries = vaultRepository.list(), message = result.fold({ entry -> "已加密保存 ${entry.name}" }, { error -> "导入失败：${error.message}" })) }
+        }
+    }
+
+    fun exportVaultFile(entry: VaultEntry, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { vaultRepository.export(entry, uri) }
+            _state.update { it.copy(message = result.fold({ "已导出 ${entry.name}" }, { error -> "导出失败：${error.message}" })) }
+        }
+    }
+
+    fun deleteVaultFile(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = vaultRepository.delete(id)
+            _state.update { it.copy(vaultEntries = vaultRepository.list(), message = if (ok) "保险箱文件已删除" else "删除失败") }
+        }
+    }
+
+    fun exportConfig(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                getApplication<Application>().contentResolver.openOutputStream(uri, "w")?.bufferedWriter()?.use { it.write(configRepository.export()) }
+                    ?: error("无法写入配置文件")
+            }
+            _state.update { it.copy(message = result.fold({ "配置已导出" }, { error -> "导出失败：${error.message}" })) }
+        }
+    }
+
+    fun importConfig(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val raw = getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("无法读取配置文件")
+                configRepository.import(raw)
+            }
+            val imported = result.getOrNull()
+            if (imported != null) {
+                ScheduleManager.configure(
+                    getApplication(), preferences.scheduleEnabled, preferences.scheduleFrequency,
+                    preferences.scheduleRequireCharging, preferences.scheduleRequireIdle,
+                )
+            }
+            _state.update {
+                it.copy(
+                    customRules = customRuleRepository.list(), whitelist = whitelistRepository.list(),
+                    themeMode = preferences.themeMode, deleteMode = preferences.deleteMode,
+                    cleanProfile = preferences.cleanProfile,
+                    haptics = preferences.haptics, largeFileMb = preferences.largeFileMb,
+                    scheduleEnabled = preferences.scheduleEnabled, scheduleFrequency = preferences.scheduleFrequency,
+                    scheduleRequireCharging = preferences.scheduleRequireCharging,
+                    scheduleRequireIdle = preferences.scheduleRequireIdle,
+                    scheduleScanOnly = preferences.scheduleScanOnly,
+                    scheduleStorageThreshold = preferences.scheduleStorageThreshold,
+                    trashRetentionDays = preferences.trashRetentionDays, trashMaxMb = preferences.trashMaxMb,
+                    message = if (imported != null) "已导入 ${imported.rules} 条规则和 ${imported.whitelist} 个保护项" else "导入失败：${result.exceptionOrNull()?.message}",
+                )
+            }
+        }
+    }
+
+    fun updateSignedRules() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(isBusy = true, operationTitle = "正在校验规则更新", message = null) }
+            val result = runCatching { ruleUpdateRepository.update() }
+            _state.update { it.copy(isBusy = false, ruleUpdateInfo = ruleUpdateRepository.info(), message = result.fold({ info -> "规则已更新：v${info.version} · ${info.ruleCount} 条" }, { error -> "规则更新失败：${error.message}" })) }
+        }
     }
 
     fun addSafRoot(uri: Uri) {

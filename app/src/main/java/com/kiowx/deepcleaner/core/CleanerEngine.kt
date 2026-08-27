@@ -101,7 +101,15 @@ class CleanerEngine(private val context: Context) {
                     if (file.lastModified() <= cutoff || FileClassifier.isInstaller(file)) {
                         val type = file.extension.ifBlank { "无扩展名" }.uppercase(Locale.ROOT)
                         val location = file.parentFile?.name.orEmpty()
-                        val reason = if (FileClassifier.isInstaller(file)) "$type 安装包 · $location" else "$type · $location · 超过 $olderThanDays 天未修改"
+                        val smartType = when (file.extension.lowercase(Locale.ROOT)) {
+                            "apk", "apks", "xapk", "apkm" -> "安装包"
+                            "zip", "rar", "7z", "tar", "gz" -> "压缩包"
+                            "mp4", "mkv", "mov", "avi", "webm" -> "视频"
+                            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt" -> "文档"
+                            "crdownload", "download", "part" -> "未完成下载"
+                            else -> "下载文件"
+                        }
+                        val reason = if (FileClassifier.isInstaller(file)) "$smartType · $type · $location · 已下载的安装文件" else "$smartType · $type · $location · 超过 $olderThanDays 天未修改"
                         val item = file.toItem(CleanCategory.DOWNLOAD, reason, false)
                         found += item
                         foundBytes += item.size
@@ -222,6 +230,15 @@ class CleanerEngine(private val context: Context) {
         items.forEachIndexed { index, item ->
             currentCoroutineContext().ensureActive()
             val file = item.file
+            if (item.category == CleanCategory.ROOT_CACHE) {
+                val ok = RootAccess.clearCache(item.path)
+                if (ok) {
+                    deleted++
+                    released += item.size
+                } else failed++
+                onProgress(index + 1, items.size, item.name)
+                return@forEachIndexed
+            }
             val safe = policy.canDelete(file) && verifyCandidate(item)
             if (safe) {
                 val ok = when (mode) {
@@ -243,12 +260,13 @@ class CleanerEngine(private val context: Context) {
         if (whitelist.isProtected(file)) return false
         if (!file.exists()) return false
         if (item.category == CleanCategory.EMPTY_FOLDER) return file.isDirectory && file.list()?.isEmpty() == true
+        if (item.category == CleanCategory.APP_RESIDUAL) return file.isDirectory
         if (!file.isFile || file.length() != item.size) return false
-        if (item.category == CleanCategory.DUPLICATE && item.duplicateGroup != null) {
+        if ((item.category == CleanCategory.DUPLICATE || item.category == CleanCategory.VIDEO_DUPLICATE) && item.duplicateGroup != null) {
             val reference = item.duplicateReference?.let(::File) ?: return false
             if (!reference.isFile || reference.length() != item.size || reference.absolutePath == file.absolutePath) return false
             return runCatching {
-                val expectedPrefix = item.duplicateGroup
+                val expectedPrefix = item.duplicateGroup.removePrefix("video-")
                 stableDigest(reference).startsWith(expectedPrefix) && stableDigest(file).startsWith(expectedPrefix)
             }.getOrDefault(false)
         }

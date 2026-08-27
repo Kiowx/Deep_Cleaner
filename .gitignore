@@ -11,3 +11,4 @@ build/
 captures/
 app/release/
 dist/
+.keys/

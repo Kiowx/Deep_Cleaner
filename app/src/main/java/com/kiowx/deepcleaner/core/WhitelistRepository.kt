@@ -25,6 +25,10 @@ class WhitelistRepository(context: Context) {
 
     fun remove(id: String) = synchronized(lock) { write(read().filterNot { it.id == id }) }
 
+    fun replace(entries: List<WhitelistEntry>) = synchronized(lock) {
+        write(entries.distinctBy { "${it.type}:${it.value.lowercase(Locale.ROOT)}" }.take(500))
+    }
+
     fun pathEntries(): Set<String> = list().asSequence()
         .filter { it.type == WhitelistType.PATH }
         .mapNotNull { runCatching { File(it.value).canonicalPath }.getOrNull() }

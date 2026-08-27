@@ -22,6 +22,14 @@ class AppPreferences(context: Context) {
         get() = prefs.getInt("large_file_mb", 256).coerceIn(10, 8192)
         set(value) { prefs.edit { putInt("large_file_mb", value.coerceIn(10, 8192)) } }
 
+    var cleanProfile: CleanProfile
+        get() = enumValueOrDefault(prefs.getString("clean_profile", null), CleanProfile.SAFE)
+        set(value) { prefs.edit { putString("clean_profile", value.name) } }
+
+    var rootModeEnabled: Boolean
+        get() = prefs.getBoolean("root_mode_enabled", false)
+        set(value) { prefs.edit { putBoolean("root_mode_enabled", value) } }
+
     var scheduleEnabled: Boolean
         get() = prefs.getBoolean("schedule_enabled", false)
         set(value) { prefs.edit { putBoolean("schedule_enabled", value) } }
@@ -61,6 +69,14 @@ class AppPreferences(context: Context) {
     var lastCleanedAt: Long
         get() = prefs.getLong("last_cleaned_at", 0)
         set(value) { prefs.edit { putLong("last_cleaned_at", value) } }
+
+    var lastScanBytes: Long
+        get() = prefs.getLong("last_scan_bytes", 0).coerceAtLeast(0)
+        set(value) { prefs.edit { putLong("last_scan_bytes", value.coerceAtLeast(0)) } }
+
+    var lastScanAt: Long
+        get() = prefs.getLong("last_scan_at", 0)
+        set(value) { prefs.edit { putLong("last_scan_at", value) } }
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String?, fallback: T): T =
         runCatching { enumValueOf<T>(raw.orEmpty()) }.getOrDefault(fallback)

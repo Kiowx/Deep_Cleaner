@@ -2,12 +2,15 @@ package com.kiowx.deepcleaner.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
+import android.hardware.biometrics.BiometricPrompt
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.CancellationSignal
 import android.os.Environment
 import android.os.storage.StorageManager
 import android.provider.Settings
@@ -38,6 +41,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -47,6 +53,7 @@ import com.kiowx.deepcleaner.DeepCleanerViewModel
 import com.kiowx.deepcleaner.core.AppEntry
 import com.kiowx.deepcleaner.core.MainSection
 import com.kiowx.deepcleaner.core.ToolKind
+import com.kiowx.deepcleaner.core.VaultEntry
 
 @Composable
 fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) {
@@ -60,6 +67,40 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
     ) { }
     val treeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::addSafRoot)
+    }
+    var pendingVaultExport by remember { mutableStateOf<VaultEntry?>(null) }
+    var pendingLegacyAuth by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val vaultPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::importVaultFile)
+    }
+    val vaultExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val entry = pendingVaultExport
+        pendingVaultExport = null
+        if (uri != null && entry != null) viewModel.exportVaultFile(entry, uri)
+    }
+    val configExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let(viewModel::exportConfig)
+    }
+    val configImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::importConfig)
+    }
+    val credentialLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val action = pendingLegacyAuth
+        pendingLegacyAuth = null
+        if (result.resultCode == Activity.RESULT_OK) action?.invoke() else viewModel.postMessage("身份验证已取消")
+    }
+
+    fun withVaultAuthentication(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            authenticateVault(context, action) { viewModel.postMessage(it) }
+        } else {
+            val keyguard = context.getSystemService(KeyguardManager::class.java)
+            val intent = keyguard.createConfirmDeviceCredentialIntent("解锁文件保险箱", "验证身份后继续")
+            if (intent == null) action() else {
+                pendingLegacyAuth = action
+                credentialLauncher.launch(intent)
+            }
+        }
     }
 
     fun requestStorageAccess() {
@@ -198,6 +239,30 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
                     state, modifier, viewModel::closeTool, { treeLauncher.launch(null) }, viewModel::removeSafRoot,
                     viewModel::analyzeSafRoots, viewModel::cancelOperation,
                 )
+                ToolKind.CUSTOM_RULES -> CustomRulesScreen(
+                    state, modifier, viewModel::closeTool, viewModel::addCustomRule, viewModel::setCustomRuleEnabled,
+                    viewModel::removeCustomRule, viewModel::runActiveTool, viewModel::cancelOperation,
+                    viewModel::toggleItem, viewModel::cleanSelected,
+                )
+                ToolKind.CLEAN_PROFILES -> CleanProfilesScreen(state, modifier, viewModel::closeTool, viewModel::setCleanProfile)
+                ToolKind.STORAGE_TRENDS -> StorageTrendsScreen(state, modifier, viewModel::closeTool, viewModel::clearStorageTrends)
+                ToolKind.VAULT -> VaultScreen(
+                    state, modifier, viewModel::closeTool,
+                    onAdd = { withVaultAuthentication { vaultPicker.launch(arrayOf("*/*")) } },
+                    onExport = { entry ->
+                        withVaultAuthentication {
+                            pendingVaultExport = entry
+                            vaultExport.launch(entry.name)
+                        }
+                    },
+                    onDelete = { id -> withVaultAuthentication { viewModel.deleteVaultFile(id) } },
+                )
+                ToolKind.CONFIG_BACKUP -> ConfigBackupScreen(
+                    modifier, viewModel::closeTool,
+                    onExport = { configExport.launch("deep-cleaner-config-1.1.0.json") },
+                    onImport = { configImport.launch(arrayOf("application/json", "text/plain")) },
+                )
+                ToolKind.RULE_UPDATES -> RuleUpdateScreen(state, modifier, viewModel::closeTool, viewModel::updateSignedRules)
                 else -> ToolsScreen(
                     state = state,
                     modifier = modifier,
@@ -243,6 +308,7 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
                 onAutoStorageThreshold = { viewModel.setAutoRules(storageThreshold = it) },
                 onTrashRetention = { viewModel.setTrashRules(retentionDays = it) },
                 onTrashMaxMb = { viewModel.setTrashRules(maxMb = it) },
+                onRootMode = viewModel::setRootMode,
                 onJoinQqGroup = ::joinQqGroup,
                 onOpenAuthor = ::openAuthorPage,
             )
@@ -250,6 +316,29 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
         }
     }
     }
+}
+
+private fun authenticateVault(context: Context, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return onSuccess()
+    val executor = context.mainExecutor
+    val builder = BiometricPrompt.Builder(context)
+        .setTitle("解锁 Deep Cleaner 保险箱")
+        .setSubtitle("使用生物识别或设备凭据继续")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        builder.setDeviceCredentialAllowed(true)
+    } else {
+        builder.setNegativeButton("取消", executor) { _, _ -> onError("身份验证已取消") }
+    }
+    builder.build().authenticate(
+        CancellationSignal(),
+        executor,
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) = onSuccess()
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                onError(errString?.toString().orEmpty().ifBlank { "身份验证失败" })
+            }
+        },
+    )
 }
 
 private fun launchApp(context: Context, app: AppEntry, viewModel: DeepCleanerViewModel) {

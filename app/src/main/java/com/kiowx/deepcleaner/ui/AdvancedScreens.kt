@@ -215,6 +215,8 @@ fun HistoryScreen(
                         Column(Modifier.weight(1f)) {
                             Text(record.source, fontWeight = FontWeight.SemiBold)
                             Text("处理 ${record.deleted} 项${if (record.failed > 0) " · ${record.failed} 项失败" else ""}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (record.categories.isNotBlank()) Text(record.categories, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            if (record.durationMs > 0) Text("耗时 ${record.durationMs / 1000.0} 秒", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                             Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.timestamp)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Text(formatBytes(record.releasedBytes), color = MaterialTheme.colorScheme.primary)
@@ -282,7 +284,7 @@ fun ExternalStorageScreen(
 }
 
 @Composable
-private fun AdvancedHeader(title: String, subtitle: String, onBack: () -> Unit) {
+fun AdvancedHeader(title: String, subtitle: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回") }
         Column {

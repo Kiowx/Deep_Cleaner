@@ -99,8 +99,10 @@ import com.kiowx.deepcleaner.DeepCleanerUiState
 import com.kiowx.deepcleaner.core.AppEntry
 import com.kiowx.deepcleaner.core.CleanCategory
 import com.kiowx.deepcleaner.core.CleanItem
+import com.kiowx.deepcleaner.core.CleanRisk
 import com.kiowx.deepcleaner.core.DeleteMode
 import com.kiowx.deepcleaner.core.ScheduleFrequency
+import com.kiowx.deepcleaner.core.ResultSort
 import com.kiowx.deepcleaner.core.ThemeMode
 import com.kiowx.deepcleaner.core.ToolKind
 import com.kiowx.deepcleaner.core.TrashRecord
@@ -178,6 +180,12 @@ fun HomeScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("立即扫描", fontWeight = FontWeight.Bold)
                     }
+                    Text(
+                        "当前方案：${state.cleanProfile.title}",
+                        color = Color.White.copy(alpha = .72f),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 7.dp),
+                    )
                 }
             }
         }
@@ -313,6 +321,10 @@ fun CleanerScreen(
     onClean: () -> Unit,
 ) {
     var confirmClean by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(ResultSort.SIZE_DESC) }
+    var risk by remember { mutableStateOf<CleanRisk?>(null) }
+    val filteredItems = filterResults(state.items, query, sort, risk)
     if (confirmClean) {
         ConfirmCleanDialog(state, onDismiss = { confirmClean = false }) {
             confirmClean = false
@@ -339,9 +351,11 @@ fun CleanerScreen(
                     selectedBytes = state.selectedBytes,
                     allSelected = state.items.all(CleanItem::selected),
                     onSelectAll = onSelectAll,
+                    availableAfter = state.storage.available + state.selectedBytes,
                 )
             }
-            state.items.groupBy(CleanItem::category).forEach { (category, categoryItems) ->
+            item { ResultFilterBar(query, { query = it }, sort, { sort = it }, risk, { risk = it }) }
+            filteredItems.groupBy(CleanItem::category).forEach { (category, categoryItems) ->
                 item(key = category.name) {
                     CategoryCard(category, categoryItems, onToggle, onSelectCategory)
                 }
@@ -363,13 +377,22 @@ fun CleanerScreen(
 }
 
 @Composable
-private fun ResultsHeader(count: Int, bytes: Long, selectedCount: Int, selectedBytes: Long, allSelected: Boolean, onSelectAll: (Boolean) -> Unit) {
+private fun ResultsHeader(
+    count: Int,
+    bytes: Long,
+    selectedCount: Int,
+    selectedBytes: Long,
+    allSelected: Boolean,
+    onSelectAll: (Boolean) -> Unit,
+    availableAfter: Long? = null,
+) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("扫描完成", style = MaterialTheme.typography.titleLarge)
                 Text("发现 $count 项 · ${formatBytes(bytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("已选 $selectedCount 项 · ${formatBytes(selectedBytes)}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                if (availableAfter != null) Text("预计清理后可用 ${formatBytes(availableAfter)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             FilterChip(selected = allSelected, onClick = { onSelectAll(!allSelected) }, label = { Text(if (allSelected) "取消全选" else "全选") })
         }
@@ -478,12 +501,25 @@ private fun ToolsOverview(modifier: Modifier, showTrash: Boolean, onOpen: (ToolK
         item { BrandHeader("工具") }
         item { SectionLabel("存储与文件") }
         item { ToolCard(Icons.Rounded.PieChart, ToolKind.STORAGE_ANALYZER.title, ToolKind.STORAGE_ANALYZER.subtitle, Color(0xFF2563EB)) { onOpen(ToolKind.STORAGE_ANALYZER) } }
-        item { ToolCard(Icons.Rounded.ImageSearch, ToolKind.SIMILAR_MEDIA.title, ToolKind.SIMILAR_MEDIA.subtitle, Color(0xFF7C3AED)) { onOpen(ToolKind.SIMILAR_MEDIA) } }
+        item { ToolCard(Icons.Rounded.History, ToolKind.FILE_TIMELINE.title, ToolKind.FILE_TIMELINE.subtitle, Color(0xFF0F766E)) { onOpen(ToolKind.FILE_TIMELINE) } }
         item { ToolCard(Icons.Rounded.Storage, ToolKind.LARGE_FILES.title, ToolKind.LARGE_FILES.subtitle, AquaBlue) { onOpen(ToolKind.LARGE_FILES) } }
         item { ToolCard(Icons.Rounded.ContentCopy, ToolKind.DUPLICATES.title, ToolKind.DUPLICATES.subtitle, Color(0xFF4F7FDB)) { onOpen(ToolKind.DUPLICATES) } }
         item { ToolCard(Icons.Rounded.FolderOff, ToolKind.EMPTY_FOLDERS.title, ToolKind.EMPTY_FOLDERS.subtitle, WarmOrange) { onOpen(ToolKind.EMPTY_FOLDERS) } }
         item { ToolCard(Icons.Rounded.Download, ToolKind.DOWNLOADS.title, ToolKind.DOWNLOADS.subtitle, Color(0xFF4C89E8)) { onOpen(ToolKind.DOWNLOADS) } }
+        item { ToolCard(Icons.Rounded.FolderOpen, ToolKind.ARCHIVE_MANAGER.title, ToolKind.ARCHIVE_MANAGER.subtitle, Color(0xFFB45309)) { onOpen(ToolKind.ARCHIVE_MANAGER) } }
+        item { SectionLabel("相册与媒体") }
+        item { ToolCard(Icons.Rounded.ImageSearch, ToolKind.SIMILAR_MEDIA.title, ToolKind.SIMILAR_MEDIA.subtitle, Color(0xFF7C3AED)) { onOpen(ToolKind.SIMILAR_MEDIA) } }
+        item { ToolCard(Icons.Rounded.ImageSearch, ToolKind.MEDIA_COLLECTIONS.title, ToolKind.MEDIA_COLLECTIONS.subtitle, Color(0xFFDB2777)) { onOpen(ToolKind.MEDIA_COLLECTIONS) } }
+        item { ToolCard(Icons.Rounded.ContentCopy, ToolKind.VIDEO_DUPLICATES.title, ToolKind.VIDEO_DUPLICATES.subtitle, Color(0xFF9333EA)) { onOpen(ToolKind.VIDEO_DUPLICATES) } }
         item { ToolCard(Icons.Rounded.Compress, ToolKind.MEDIA_OPTIMIZER.title, ToolKind.MEDIA_OPTIMIZER.subtitle, Color(0xFF0891B2)) { onOpen(ToolKind.MEDIA_OPTIMIZER) } }
+        item { SectionLabel("规则与高级功能") }
+        item { ToolCard(Icons.Rounded.Tune, ToolKind.CUSTOM_RULES.title, ToolKind.CUSTOM_RULES.subtitle, Color(0xFF2563EB)) { onOpen(ToolKind.CUSTOM_RULES) } }
+        item { ToolCard(Icons.Rounded.CheckCircle, ToolKind.CLEAN_PROFILES.title, ToolKind.CLEAN_PROFILES.subtitle, Color(0xFF16A34A)) { onOpen(ToolKind.CLEAN_PROFILES) } }
+        item { ToolCard(Icons.Rounded.PieChart, ToolKind.STORAGE_TRENDS.title, ToolKind.STORAGE_TRENDS.subtitle, Color(0xFF0284C7)) { onOpen(ToolKind.STORAGE_TRENDS) } }
+        item { ToolCard(Icons.Rounded.Security, ToolKind.VAULT.title, ToolKind.VAULT.subtitle, Color(0xFF6D28D9)) { onOpen(ToolKind.VAULT) } }
+        item { ToolCard(Icons.Rounded.SystemUpdateAlt, ToolKind.CONFIG_BACKUP.title, ToolKind.CONFIG_BACKUP.subtitle, Color(0xFF475569)) { onOpen(ToolKind.CONFIG_BACKUP) } }
+        item { ToolCard(Icons.Rounded.Refresh, ToolKind.RULE_UPDATES.title, ToolKind.RULE_UPDATES.subtitle, Color(0xFF0369A1)) { onOpen(ToolKind.RULE_UPDATES) } }
+        item { ToolCard(Icons.Rounded.Android, ToolKind.ROOT_CLEANER.title, ToolKind.ROOT_CLEANER.subtitle, Color(0xFFDC2626)) { onOpen(ToolKind.ROOT_CLEANER) } }
         item { ToolCard(Icons.Rounded.Android, ToolKind.APK_MANAGER.title, ToolKind.APK_MANAGER.subtitle, Color(0xFF16A34A)) { onOpen(ToolKind.APK_MANAGER) } }
         item { ToolCard(Icons.Rounded.Policy, ToolKind.PRIVACY_SCAN.title, ToolKind.PRIVACY_SCAN.subtitle, Color(0xFFDC2626)) { onOpen(ToolKind.PRIVACY_SCAN) } }
         item { ToolCard(Icons.Rounded.Shield, ToolKind.WHITELIST.title, ToolKind.WHITELIST.subtitle, Color(0xFF0F766E)) { onOpen(ToolKind.WHITELIST) } }
@@ -515,6 +551,10 @@ private fun ToolDetailScreen(
     onArchiveDownloads: () -> Unit,
 ) {
     var confirm by remember { mutableStateOf(false) }
+    var query by remember(tool) { mutableStateOf("") }
+    var sort by remember(tool) { mutableStateOf(if (tool == ToolKind.FILE_TIMELINE) ResultSort.NEWEST else ResultSort.SIZE_DESC) }
+    var risk by remember(tool) { mutableStateOf<CleanRisk?>(null) }
+    val filteredItems = filterResults(state.items, query, sort, risk)
     if (confirm) ConfirmCleanDialog(state, { confirm = false }) { confirm = false; onClean() }
     LazyColumn(
         modifier,
@@ -566,11 +606,23 @@ private fun ToolDetailScreen(
             item {
                 ResultsHeader(
                     state.items.size, state.items.sumOf(CleanItem::size), state.selectedItems.size, state.selectedBytes,
-                    state.items.all(CleanItem::selected), onSelectAll,
+                    state.items.all(CleanItem::selected), onSelectAll, state.storage.available + state.selectedBytes,
                 )
             }
-            items(state.items, key = CleanItem::id) { item ->
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { CleanItemRow(item) { onToggle(item.id) } }
+            item { ResultFilterBar(query, { query = it }, sort, { sort = it }, risk, { risk = it }) }
+            if (tool == ToolKind.MEDIA_COLLECTIONS) {
+                filteredItems.groupBy {
+                    java.text.SimpleDateFormat("yyyy 年 MM 月", java.util.Locale.getDefault()).format(Date(it.modifiedAt))
+                }.forEach { (month, monthItems) ->
+                    item(key = "month-$month") { Text(month, style = MaterialTheme.typography.titleMedium) }
+                    items(monthItems, key = CleanItem::id) { item ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { CleanItemRow(item) { onToggle(item.id) } }
+                    }
+                }
+            } else {
+                items(filteredItems, key = CleanItem::id) { item ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { CleanItemRow(item) { onToggle(item.id) } }
+                }
             }
             item {
                 Button(
@@ -591,16 +643,79 @@ private fun ToolDetailScreen(
     }
 }
 
+@Composable
+private fun ResultFilterBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    sort: ResultSort,
+    onSort: (ResultSort) -> Unit,
+    risk: CleanRisk?,
+    onRisk: (CleanRisk?) -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                placeholder = { Text("搜索名称、路径或说明") },
+            )
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(
+                    ResultSort.SIZE_DESC to "大小",
+                    ResultSort.NEWEST to "最新",
+                    ResultSort.OLDEST to "最早",
+                    ResultSort.NAME to "名称",
+                ).forEach { (value, label) ->
+                    FilterChip(selected = sort == value, onClick = { onSort(value) }, label = { Text(label) })
+                }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                FilterChip(selected = risk == null, onClick = { onRisk(null) }, label = { Text("全部风险") })
+                CleanRisk.entries.forEach { value ->
+                    FilterChip(selected = risk == value, onClick = { onRisk(value) }, label = { Text(value.title) })
+                }
+            }
+        }
+    }
+}
+
+private fun filterResults(items: List<CleanItem>, query: String, sort: ResultSort, risk: CleanRisk?): List<CleanItem> {
+    val filtered = items.filter { item ->
+        (risk == null || item.risk == risk) &&
+            (query.isBlank() || item.name.contains(query, true) || item.path.contains(query, true) || item.reason.contains(query, true))
+    }
+    return when (sort) {
+        ResultSort.SIZE_DESC -> filtered.sortedByDescending(CleanItem::size)
+        ResultSort.NEWEST -> filtered.sortedByDescending(CleanItem::modifiedAt)
+        ResultSort.OLDEST -> filtered.sortedBy(CleanItem::modifiedAt)
+        ResultSort.NAME -> filtered.sortedBy { it.name.lowercase() }
+    }
+}
+
 private fun toolIcon(tool: ToolKind): ImageVector = when (tool) {
     ToolKind.STORAGE_ANALYZER -> Icons.Rounded.PieChart
     ToolKind.SIMILAR_MEDIA -> Icons.Rounded.ImageSearch
+    ToolKind.MEDIA_COLLECTIONS -> Icons.Rounded.ImageSearch
+    ToolKind.VIDEO_DUPLICATES -> Icons.Rounded.ContentCopy
     ToolKind.LARGE_FILES -> Icons.Rounded.Storage
     ToolKind.DUPLICATES -> Icons.Rounded.ContentCopy
     ToolKind.EMPTY_FOLDERS -> Icons.Rounded.FolderOff
     ToolKind.DOWNLOADS -> Icons.Rounded.Download
+    ToolKind.ARCHIVE_MANAGER -> Icons.Rounded.FolderOpen
+    ToolKind.FILE_TIMELINE -> Icons.Rounded.History
     ToolKind.MEDIA_OPTIMIZER -> Icons.Rounded.Compress
     ToolKind.APK_MANAGER -> Icons.Rounded.Android
     ToolKind.PRIVACY_SCAN -> Icons.Rounded.Policy
+    ToolKind.CUSTOM_RULES -> Icons.Rounded.Tune
+    ToolKind.CLEAN_PROFILES -> Icons.Rounded.CheckCircle
+    ToolKind.STORAGE_TRENDS -> Icons.Rounded.PieChart
+    ToolKind.VAULT -> Icons.Rounded.Security
+    ToolKind.CONFIG_BACKUP -> Icons.Rounded.SystemUpdateAlt
+    ToolKind.ROOT_CLEANER -> Icons.Rounded.Android
+    ToolKind.RULE_UPDATES -> Icons.Rounded.Refresh
     ToolKind.WHITELIST -> Icons.Rounded.Shield
     ToolKind.HISTORY -> Icons.Rounded.History
     ToolKind.EXTERNAL_STORAGE -> Icons.Rounded.Usb
@@ -763,6 +878,7 @@ fun SettingsScreen(
     onAutoStorageThreshold: (Int) -> Unit,
     onTrashRetention: (Int) -> Unit,
     onTrashMaxMb: (Int) -> Unit,
+    onRootMode: (Boolean) -> Unit,
     onJoinQqGroup: () -> Unit,
     onOpenAuthor: () -> Unit,
 ) {
@@ -855,6 +971,15 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
                     SettingsToggleRow(Icons.Rounded.PhoneAndroid, "触感反馈", state.haptics, onHaptics)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                    SettingsToggleRow(Icons.Rounded.Android, "Root 高级模式", state.rootModeEnabled, onRootMode)
+                    if (state.rootModeEnabled) {
+                        Text(
+                            when (state.rootAvailable) { true -> "Root 授权可用"; false -> "未获得 Root 授权"; null -> "正在等待 Root 检查" },
+                            modifier = Modifier.padding(start = 36.dp, bottom = 8.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
                     SettingsValueRow(
                         icon = Icons.Rounded.Storage,
                         title = "大文件阈值",
@@ -937,7 +1062,7 @@ fun SettingsScreen(
                 Icon(Icons.Rounded.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(11.dp))
                 Text("Deep Cleaner", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Text("1.0.0 · Android 8–16", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("1.1.0 · Android 8–16", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
