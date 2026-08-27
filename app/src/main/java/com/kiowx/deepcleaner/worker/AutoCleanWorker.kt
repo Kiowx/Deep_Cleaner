@@ -14,6 +14,8 @@ import com.kiowx.deepcleaner.core.AppPreferences
 import com.kiowx.deepcleaner.core.CleanerEngine
 import com.kiowx.deepcleaner.core.CleanProfile
 import com.kiowx.deepcleaner.core.CleanRisk
+import com.kiowx.deepcleaner.core.ExpansionScanner
+import com.kiowx.deepcleaner.core.RootAccess
 import com.kiowx.deepcleaner.core.StorageAccess
 import com.kiowx.deepcleaner.core.TrashManager
 import com.kiowx.deepcleaner.core.formatBytes
@@ -35,9 +37,14 @@ class AutoCleanWorker(
                 CleanProfile.DOWNLOADS_ONLY -> engine.scanDownloads()
                 else -> engine.scanJunk()
             }
-            val report = if (preferences.cleanProfile == CleanProfile.MAX_SPACE) {
-                baseReport.copy(items = baseReport.items.map { item -> item.copy(selected = item.risk != CleanRisk.HIGH) })
+            val expandedReport = if (preferences.rootModeEnabled) {
+                runCatching {
+                    ExpansionScanner.mergeReports(baseReport, RootAccess.scanCaches(applicationContext))
+                }.getOrDefault(baseReport)
             } else baseReport
+            val report = if (preferences.cleanProfile == CleanProfile.MAX_SPACE) {
+                expandedReport.copy(items = expandedReport.items.map { item -> item.copy(selected = item.risk != CleanRisk.HIGH) })
+            } else expandedReport
             val selected = report.items.filter { it.selected }
             if (preferences.scheduleScanOnly) {
                 showNotification("自动扫描完成", "发现 ${selected.size} 项，共 ${formatBytes(selected.sumOf { it.size })}")

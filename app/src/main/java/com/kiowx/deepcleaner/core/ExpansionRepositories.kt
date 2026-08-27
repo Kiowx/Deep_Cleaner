@@ -147,6 +147,7 @@ class ConfigRepository(private val context: Context) {
             .put("haptics", preferences.haptics)
             .put("largeFileMb", preferences.largeFileMb)
             .put("cleanProfile", preferences.cleanProfile.name)
+            .put("autoUpdateCheck", preferences.autoUpdateCheck)
             .put("scheduleEnabled", preferences.scheduleEnabled)
             .put("scheduleFrequency", preferences.scheduleFrequency.name)
             .put("scheduleRequireCharging", preferences.scheduleRequireCharging)
@@ -188,6 +189,7 @@ class ConfigRepository(private val context: Context) {
         runCatching { preferences.themeMode = ThemeMode.valueOf(settings.optString("themeMode")) }
         runCatching { preferences.deleteMode = DeleteMode.valueOf(settings.optString("deleteMode")) }
         runCatching { preferences.cleanProfile = CleanProfile.valueOf(settings.optString("cleanProfile")) }
+        if (settings.has("autoUpdateCheck")) preferences.autoUpdateCheck = settings.optBoolean("autoUpdateCheck", true)
         if (settings.has("haptics")) preferences.haptics = settings.optBoolean("haptics", true)
         if (settings.has("largeFileMb")) preferences.largeFileMb = settings.optInt("largeFileMb", 256)
         if (settings.has("scheduleEnabled")) preferences.scheduleEnabled = settings.optBoolean("scheduleEnabled")

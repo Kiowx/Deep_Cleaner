@@ -89,6 +89,16 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
         pendingLegacyAuth = null
         if (result.resultCode == Activity.RESULT_OK) action?.invoke() else viewModel.postMessage("身份验证已取消")
     }
+    val installPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (context.packageManager.canRequestPackageInstalls()) {
+            viewModel.createUpdateInstallIntent()?.let { intent ->
+                runCatching { context.startActivity(intent) }
+                    .onFailure { viewModel.postMessage("无法打开 Android 系统安装器") }
+            }
+        } else {
+            viewModel.postMessage("需要允许 Deep Cleaner 安装更新")
+        }
+    }
 
     fun withVaultAuthentication(action: () -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -159,6 +169,26 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
         runCatching { context.startActivity(intent) }
             .onFailure { viewModel.postMessage("无法打开作者主页") }
     }
+
+    fun installUpdate() {
+        if (context.packageManager.canRequestPackageInstalls()) {
+            viewModel.createUpdateInstallIntent()?.let { intent ->
+                runCatching { context.startActivity(intent) }
+                    .onFailure { viewModel.postMessage("无法打开 Android 系统安装器") }
+            }
+        } else {
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${context.packageName}".toUri())
+            runCatching { installPermissionLauncher.launch(intent) }
+                .onFailure { viewModel.postMessage("无法打开安装未知应用权限页面") }
+        }
+    }
+
+    AppUpdateDialog(
+        state = state,
+        onDismiss = viewModel::dismissUpdateDialog,
+        onDownload = viewModel::downloadUpdate,
+        onInstall = ::installUpdate,
+    )
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -309,6 +339,8 @@ fun DeepCleanerRoot(state: DeepCleanerUiState, viewModel: DeepCleanerViewModel) 
                 onTrashRetention = { viewModel.setTrashRules(retentionDays = it) },
                 onTrashMaxMb = { viewModel.setTrashRules(maxMb = it) },
                 onRootMode = viewModel::setRootMode,
+                onAutoUpdateCheck = viewModel::setAutoUpdateCheck,
+                onCheckUpdate = { viewModel.checkForUpdates(silent = false) },
                 onJoinQqGroup = ::joinQqGroup,
                 onOpenAuthor = ::openAuthorPage,
             )

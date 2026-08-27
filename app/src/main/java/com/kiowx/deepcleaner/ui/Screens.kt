@@ -19,8 +19,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Apps
@@ -331,47 +331,47 @@ fun CleanerScreen(
             onClean()
         }
     }
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item { BrandHeader("智能清理") }
-        if (!state.hasStorageAccess) item { PermissionBanner(false, onGrantAccess) }
-        if (state.isBusy) {
-            item { BusyPanel(state.operationTitle, state.progress.currentPath, state.progress.scannedFiles, state.progress.foundItems, onCancel) }
-        } else if (state.items.isEmpty()) {
-            item { EmptyScanCard(Icons.Rounded.CleaningServices, "开始深度扫描", "扫描后由你确认清理项", "开始扫描", onScan) }
-        } else {
-            item {
-                ResultsHeader(
-                    count = state.items.size,
-                    bytes = state.items.sumOf(CleanItem::size),
-                    selectedCount = state.selectedItems.size,
-                    selectedBytes = state.selectedBytes,
-                    allSelected = state.items.all(CleanItem::selected),
-                    onSelectAll = onSelectAll,
-                    availableAfter = state.storage.available + state.selectedBytes,
-                )
-            }
-            item { ResultFilterBar(query, { query = it }, sort, { sort = it }, risk, { risk = it }) }
-            filteredItems.groupBy(CleanItem::category).forEach { (category, categoryItems) ->
-                item(key = category.name) {
-                    CategoryCard(category, categoryItems, onToggle, onSelectCategory)
+    Box(modifier) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { BrandHeader("智能清理") }
+            if (!state.hasStorageAccess) item { PermissionBanner(false, onGrantAccess) }
+            if (state.isBusy) {
+                item { BusyPanel(state.operationTitle, state.progress.currentPath, state.progress.scannedFiles, state.progress.foundItems, onCancel) }
+            } else if (state.items.isEmpty()) {
+                item { EmptyScanCard(Icons.Rounded.CleaningServices, "开始深度扫描", "扫描后由你确认清理项", "开始扫描", onScan) }
+            } else {
+                item {
+                    ResultsHeader(
+                        count = state.items.size,
+                        bytes = state.items.sumOf(CleanItem::size),
+                        selectedCount = state.selectedItems.size,
+                        selectedBytes = state.selectedBytes,
+                        allSelected = state.items.all(CleanItem::selected),
+                        onSelectAll = onSelectAll,
+                        availableAfter = state.storage.available + state.selectedBytes,
+                    )
                 }
-            }
-            item {
-                Button(
-                    onClick = { confirmClean = true },
-                    enabled = state.selectedItems.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                ) {
-                    Icon(if (state.deleteMode == DeleteMode.TRASH) Icons.Rounded.DeleteSweep else Icons.Rounded.DeleteForever, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("清理 ${state.selectedItems.size} 项 · ${formatBytes(state.selectedBytes)}")
+                item { ResultFilterBar(query, { query = it }, sort, { sort = it }, risk, { risk = it }) }
+                filteredItems.groupBy(CleanItem::category).forEach { (category, categoryItems) ->
+                    item(key = category.name) {
+                        CategoryCard(category, categoryItems, onToggle, onSelectCategory)
+                    }
                 }
+                item { TextButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重新扫描") } }
             }
-            item { TextButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重新扫描") } }
+        }
+        if (!state.isBusy && state.items.isNotEmpty()) {
+            CleaningFloatingBall(
+                selectedCount = state.selectedItems.size,
+                enabled = state.selectedItems.isNotEmpty(),
+                icon = if (state.deleteMode == DeleteMode.PERMANENT) Icons.Rounded.DeleteForever else Icons.Rounded.DeleteSweep,
+                onClick = { confirmClean = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 18.dp),
+            )
         }
     }
 }
@@ -447,6 +447,93 @@ private fun ConfirmCleanDialog(state: DeepCleanerUiState, onDismiss: () -> Unit,
 }
 
 @Composable
+fun AppUpdateDialog(
+    state: DeepCleanerUiState,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    val info = state.updateInfo ?: return
+    if (!state.updateDialogVisible) return
+    AlertDialog(
+        onDismissRequest = { if (!state.updateDownloading) onDismiss() },
+        icon = { Icon(Icons.Rounded.SystemUpdateAlt, null) },
+        title = { Text("发现新版本 ${info.versionName}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("当前 ${state.currentVersionName} · 新版 ${info.versionName}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (info.mandatory) Text("重要更新", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                Text(info.changelog)
+                Text("更新包将校验 SHA-256、应用 ID 和版本号，安装仍由 Android 系统确认。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.updateDownloading) {
+                    LinearProgressIndicator(
+                        progress = { state.updateProgress / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("正在下载并校验 ${state.updateProgress}%", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = if (state.downloadedUpdatePath != null) onInstall else onDownload,
+                enabled = !state.updateDownloading,
+            ) {
+                Text(
+                    when {
+                        state.updateDownloading -> "下载中"
+                        state.downloadedUpdatePath != null -> "安装更新"
+                        else -> "下载更新"
+                    },
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !state.updateDownloading) { Text("稍后") } },
+    )
+}
+
+@Composable
+private fun CleaningFloatingBall(
+    selectedCount: Int,
+    enabled: Boolean,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.size(70.dp)) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier.size(62.dp).align(Alignment.BottomStart),
+            enabled = enabled,
+            shape = CircleShape,
+            color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            shadowElevation = 10.dp,
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(icon, "清理所选项目", modifier = Modifier.size(27.dp))
+            }
+        }
+        if (selectedCount > 0) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.error,
+                contentColor = MaterialTheme.colorScheme.onError,
+                shadowElevation = 3.dp,
+            ) {
+                Text(
+                    if (selectedCount > 99) "99+" else selectedCount.toString(),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 internal fun EmptyScanCard(icon: ImageVector, title: String, subtitle: String, action: String, onClick: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -519,7 +606,6 @@ private fun ToolsOverview(modifier: Modifier, showTrash: Boolean, onOpen: (ToolK
         item { ToolCard(Icons.Rounded.Security, ToolKind.VAULT.title, ToolKind.VAULT.subtitle, Color(0xFF6D28D9)) { onOpen(ToolKind.VAULT) } }
         item { ToolCard(Icons.Rounded.SystemUpdateAlt, ToolKind.CONFIG_BACKUP.title, ToolKind.CONFIG_BACKUP.subtitle, Color(0xFF475569)) { onOpen(ToolKind.CONFIG_BACKUP) } }
         item { ToolCard(Icons.Rounded.Refresh, ToolKind.RULE_UPDATES.title, ToolKind.RULE_UPDATES.subtitle, Color(0xFF0369A1)) { onOpen(ToolKind.RULE_UPDATES) } }
-        item { ToolCard(Icons.Rounded.Android, ToolKind.ROOT_CLEANER.title, ToolKind.ROOT_CLEANER.subtitle, Color(0xFFDC2626)) { onOpen(ToolKind.ROOT_CLEANER) } }
         item { ToolCard(Icons.Rounded.Android, ToolKind.APK_MANAGER.title, ToolKind.APK_MANAGER.subtitle, Color(0xFF16A34A)) { onOpen(ToolKind.APK_MANAGER) } }
         item { ToolCard(Icons.Rounded.Policy, ToolKind.PRIVACY_SCAN.title, ToolKind.PRIVACY_SCAN.subtitle, Color(0xFFDC2626)) { onOpen(ToolKind.PRIVACY_SCAN) } }
         item { ToolCard(Icons.Rounded.Shield, ToolKind.WHITELIST.title, ToolKind.WHITELIST.subtitle, Color(0xFF0F766E)) { onOpen(ToolKind.WHITELIST) } }
@@ -556,11 +642,12 @@ private fun ToolDetailScreen(
     var risk by remember(tool) { mutableStateOf<CleanRisk?>(null) }
     val filteredItems = filterResults(state.items, query, sort, risk)
     if (confirm) ConfirmCleanDialog(state, { confirm = false }) { confirm = false; onClean() }
-    LazyColumn(
-        modifier,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    Box(modifier) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回") }
@@ -609,6 +696,9 @@ private fun ToolDetailScreen(
                     state.items.all(CleanItem::selected), onSelectAll, state.storage.available + state.selectedBytes,
                 )
             }
+            if (tool == ToolKind.DOWNLOADS) {
+                item { OutlinedButton(onClick = onArchiveDownloads, enabled = state.selectedItems.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("归档到 Download/DeepCleanerArchive") } }
+            }
             item { ResultFilterBar(query, { query = it }, sort, { sort = it }, risk, { risk = it }) }
             if (tool == ToolKind.MEDIA_COLLECTIONS) {
                 filteredItems.groupBy {
@@ -624,21 +714,21 @@ private fun ToolDetailScreen(
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { CleanItemRow(item) { onToggle(item.id) } }
                 }
             }
-            item {
-                Button(
-                    onClick = { if (tool == ToolKind.MEDIA_OPTIMIZER) onOptimizeMedia() else confirm = true },
-                    enabled = state.selectedItems.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) {
-                    Icon(if (tool == ToolKind.MEDIA_OPTIMIZER) Icons.Rounded.Compress else Icons.Rounded.DeleteSweep, null)
-                    Spacer(Modifier.width(7.dp))
-                    Text(if (tool == ToolKind.MEDIA_OPTIMIZER) "压缩所选 ${state.selectedItems.size} 项" else "处理所选 ${state.selectedItems.size} 项")
-                }
-            }
-            if (tool == ToolKind.DOWNLOADS) {
-                item { OutlinedButton(onClick = onArchiveDownloads, enabled = state.selectedItems.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("归档到 Download/DeepCleanerArchive") } }
-            }
             item { TextButton(onClick = onRun, modifier = Modifier.fillMaxWidth()) { Text("重新扫描") } }
+        }
+        }
+        if (tool != ToolKind.TRASH && !state.isBusy && state.items.isNotEmpty()) {
+            CleaningFloatingBall(
+                selectedCount = state.selectedItems.size,
+                enabled = state.selectedItems.isNotEmpty(),
+                icon = when {
+                    tool == ToolKind.MEDIA_OPTIMIZER -> Icons.Rounded.Compress
+                    state.deleteMode == DeleteMode.PERMANENT -> Icons.Rounded.DeleteForever
+                    else -> Icons.Rounded.DeleteSweep
+                },
+                onClick = { if (tool == ToolKind.MEDIA_OPTIMIZER) onOptimizeMedia() else confirm = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 18.dp),
+            )
         }
     }
 }
@@ -714,7 +804,6 @@ private fun toolIcon(tool: ToolKind): ImageVector = when (tool) {
     ToolKind.STORAGE_TRENDS -> Icons.Rounded.PieChart
     ToolKind.VAULT -> Icons.Rounded.Security
     ToolKind.CONFIG_BACKUP -> Icons.Rounded.SystemUpdateAlt
-    ToolKind.ROOT_CLEANER -> Icons.Rounded.Android
     ToolKind.RULE_UPDATES -> Icons.Rounded.Refresh
     ToolKind.WHITELIST -> Icons.Rounded.Shield
     ToolKind.HISTORY -> Icons.Rounded.History
@@ -879,6 +968,8 @@ fun SettingsScreen(
     onTrashRetention: (Int) -> Unit,
     onTrashMaxMb: (Int) -> Unit,
     onRootMode: (Boolean) -> Unit,
+    onAutoUpdateCheck: (Boolean) -> Unit,
+    onCheckUpdate: () -> Unit,
     onJoinQqGroup: () -> Unit,
     onOpenAuthor: () -> Unit,
 ) {
@@ -954,6 +1045,47 @@ fun SettingsScreen(
         }
         item {
             SettingsGroup {
+                SettingsToggleRow(Icons.Rounded.Android, "Root 全局模式", state.rootModeEnabled, onRootMode)
+                Text(
+                    if (!state.rootModeEnabled) {
+                        "默认关闭；开启后智能扫描和自动任务会同时检查应用私有缓存。"
+                    } else {
+                        when (state.rootAvailable) {
+                            true -> "Root 授权可用，已扩展全局扫描与清理范围。"
+                            false -> "未获得 Root 授权，将继续使用普通扫描范围。"
+                            null -> "正在检查 Root 授权…"
+                        }
+                    },
+                    modifier = Modifier.padding(start = 36.dp, end = 12.dp, bottom = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        item {
+            SettingsGroup {
+                SettingsValueRow(
+                    icon = Icons.Rounded.SystemUpdateAlt,
+                    title = "检查更新",
+                    value = when {
+                        state.updateChecking -> "正在检查…"
+                        state.updateInfo != null -> "发现 ${state.updateInfo.versionName}"
+                        else -> "当前 ${state.currentVersionName}"
+                    },
+                    onClick = onCheckUpdate,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                SettingsToggleRow(Icons.Rounded.Refresh, "启动时自动检查", state.autoUpdateCheck, onAutoUpdateCheck)
+                Text(
+                    "仅在软件启动时检查一次；不会在后台定时联网。关闭后仍可手动检查。",
+                    modifier = Modifier.padding(start = 36.dp, end = 12.dp, bottom = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        item {
+            SettingsGroup {
                 Row(
                     Modifier.fillMaxWidth().clickable { advancedExpanded = !advancedExpanded }.padding(vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -970,15 +1102,6 @@ fun SettingsScreen(
                 if (advancedExpanded) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
                     SettingsToggleRow(Icons.Rounded.PhoneAndroid, "触感反馈", state.haptics, onHaptics)
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
-                    SettingsToggleRow(Icons.Rounded.Android, "Root 高级模式", state.rootModeEnabled, onRootMode)
-                    if (state.rootModeEnabled) {
-                        Text(
-                            when (state.rootAvailable) { true -> "Root 授权可用"; false -> "未获得 Root 授权"; null -> "正在等待 Root 检查" },
-                            modifier = Modifier.padding(start = 36.dp, bottom = 8.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
                     SettingsValueRow(
                         icon = Icons.Rounded.Storage,
@@ -1062,7 +1185,7 @@ fun SettingsScreen(
                 Icon(Icons.Rounded.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(11.dp))
                 Text("Deep Cleaner", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                Text("1.1.0 · Android 8–16", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${state.currentVersionName} · Android 8–16", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

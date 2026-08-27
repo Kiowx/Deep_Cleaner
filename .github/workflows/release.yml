@@ -1,0 +1,225 @@
+name: Build and publish Android release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release.yml"
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
+      - "tools/generate_update_manifest.py"
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: "Release notes; when empty, use the latest commit body"
+        required: false
+        default: ""
+        type: string
+      mandatory:
+        description: "Mark this as an important update"
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Publish as a prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEEP_CLEANER_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      DEEP_CLEANER_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      DEEP_CLEANER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      MANDATORY: ${{ github.event_name == 'workflow_dispatch' && inputs.mandatory || false }}
+      PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and create tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
+          version_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9]*\)/\1/p' app/build.gradle.kts)"
+          [[ -n "${version_name}" && -n "${version_code}" ]]
+
+          tag="v${version_name}"
+          apk_name="Deep-Cleaner-${version_name}-Android16-release.apk"
+          skip_build=false
+          git fetch --tags --force
+
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            tagged_sha="$(git rev-list -n 1 "${tag}")"
+            if gh release view "${tag}" >/dev/null 2>&1 && [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              echo "${tag} already has a Release; bump versionName/versionCode for a new release."
+              skip_build=true
+            elif [[ "${tagged_sha}" != "${GITHUB_SHA}" ]]; then
+              echo "${tag} points to ${tagged_sha}, not ${GITHUB_SHA}; bump the app version before publishing." >&2
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+            echo "Created and pushed ${tag}."
+          fi
+
+          echo "version_name=${version_name}" >> "${GITHUB_OUTPUT}"
+          echo "version_code=${version_code}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "apk_name=${apk_name}" >> "${GITHUB_OUTPUT}"
+          echo "skip_build=${skip_build}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Java 17
+        if: steps.version.outputs.skip_build != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        if: steps.version.outputs.skip_build != 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore production signing key
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "${KEYSTORE_BASE64}" ]]
+          [[ -n "${DEEP_CLEANER_STORE_PASSWORD}" ]]
+          [[ -n "${DEEP_CLEANER_KEY_ALIAS}" ]]
+          [[ -n "${DEEP_CLEANER_KEY_PASSWORD}" ]]
+          keystore_path="${RUNNER_TEMP}/deep-cleaner-release.jks"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore_path}"
+          chmod 600 "${keystore_path}"
+          echo "DEEP_CLEANER_KEYSTORE_PATH=${keystore_path}" >> "${GITHUB_ENV}"
+
+      - name: Test, lint, and build release
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease --no-daemon --no-configuration-cache
+
+      - name: Extract release notes from latest commit body
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        env:
+          MANUAL_CHANGELOG: ${{ github.event_name == 'workflow_dispatch' && inputs.changelog || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          raw_notes="${MANUAL_CHANGELOG}"
+          if [[ -z "$(printf '%s' "${raw_notes}" | tr -d '[:space:]')" ]]; then
+            raw_notes="$(git log -1 --format='%b' "${GITHUB_SHA}")"
+          fi
+          if [[ -z "$(printf '%s' "${raw_notes}" | tr -d '[:space:]')" ]]; then
+            raw_notes="$(git log -1 --format='%s' "${GITHUB_SHA}")"
+          fi
+          if [[ -z "$(printf '%s' "${raw_notes}" | tr -d '[:space:]')" ]]; then
+            raw_notes="修复问题并提升使用体验。"
+          fi
+
+          printf '%s\n' "${raw_notes}" | sed '/^[[:space:]]*$/d' > dist/release-notes.md
+          awk '/^[[:space:]]*---[[:space:]]*$/ {exit} {print}' dist/release-notes.md \
+            | sed -E 's/^[[:space:]]*[-*][[:space:]]+//; /^[[:space:]]*$/d' \
+            | head -n 12 > dist/update-notes.txt
+          if [[ ! -s dist/update-notes.txt ]]; then
+            printf '修复问题并提升使用体验。\n' > dist/update-notes.txt
+          fi
+
+          echo "Release notes:"
+          cat dist/release-notes.md
+
+      - name: Prepare release assets and update manifest
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          APK_NAME: ${{ steps.version.outputs.apk_name }}
+        run: |
+          set -euo pipefail
+          cp app/build/outputs/apk/release/app-release.apk "dist/${APK_NAME}"
+          mandatory_flag=()
+          if [[ "${MANDATORY}" == "true" ]]; then mandatory_flag+=(--mandatory); fi
+          python3 tools/generate_update_manifest.py \
+            --apk "dist/${APK_NAME}" \
+            --output dist/update.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --version-code "${VERSION_CODE}" \
+            --version-name "${VERSION_NAME}" \
+            --min-sdk 26 \
+            --changelog "$(cat dist/update-notes.txt)" \
+            "${mandatory_flag[@]}"
+          sha256sum "dist/${APK_NAME}" > "dist/${APK_NAME}.sha256"
+
+      - name: Upload workflow artifact
+        if: steps.version.outputs.skip_build != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deep-Cleaner-${{ steps.version.outputs.version_name }}-release
+          path: |
+            dist/${{ steps.version.outputs.apk_name }}
+            dist/${{ steps.version.outputs.apk_name }}.sha256
+            dist/update.json
+            dist/release-notes.md
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.skip_build != 'true'
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          APK_NAME: ${{ steps.version.outputs.apk_name }}
+        run: |
+          set -euo pipefail
+          assets=(
+            "dist/${APK_NAME}#Deep Cleaner Android 8-16 APK"
+            "dist/${APK_NAME}.sha256#APK SHA-256 checksum"
+            "dist/update.json#In-app update manifest"
+          )
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "Deep Cleaner ${VERSION_NAME}" \
+              --notes-file dist/release-notes.md
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
+          else
+            release_flags=()
+            if [[ "${PRERELEASE}" == "true" ]]; then release_flags+=(--prerelease); fi
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --target "${GITHUB_SHA}" \
+              --title "Deep Cleaner ${VERSION_NAME}" \
+              --notes-file dist/release-notes.md \
+              "${release_flags[@]}"
+          fi

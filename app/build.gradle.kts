@@ -6,6 +6,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseKeystorePath = providers.environmentVariable("DEEP_CLEANER_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("DEEP_CLEANER_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("DEEP_CLEANER_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("DEEP_CLEANER_KEY_PASSWORD").orNull
+val hasProductionSigning = listOf(
+    releaseKeystorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.kiowx.deepcleaner"
     compileSdk = 36
@@ -21,11 +32,26 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        if (hasProductionSigning) {
+            create("production") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Keep Release non-debuggable and optimized, but use the local Android
-            // test certificate so CI/ADB builds are installable without private keys.
-            signingConfig = signingConfigs.getByName("debug")
+            // Local ADB builds retain the stable local debug certificate. GitHub Actions
+            // supplies the production keystore through environment-backed secrets.
+            signingConfig = signingConfigs.getByName(if (hasProductionSigning) "production" else "debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -77,6 +103,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260719")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

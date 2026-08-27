@@ -23,7 +23,6 @@ enum class ToolKind(val title: String, val subtitle: String) {
     STORAGE_TRENDS("存储趋势", "记录空间变化并定位异常增长"),
     VAULT("文件保险箱", "加密保存重要文件并使用系统身份验证"),
     CONFIG_BACKUP("配置备份", "导入或导出规则、保护名单和设置"),
-    ROOT_CLEANER("Root 高级模式", "可选扫描应用私有缓存，默认关闭"),
     RULE_UPDATES("规则更新", "校验签名后更新本地扫描规则"),
     WHITELIST("保护名单", "保护文件、目录和扩展名"),
     HISTORY("清理历史", "查看每次清理与释放空间"),

@@ -30,6 +30,10 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean("root_mode_enabled", false)
         set(value) { prefs.edit { putBoolean("root_mode_enabled", value) } }
 
+    var autoUpdateCheck: Boolean
+        get() = prefs.getBoolean("auto_update_check", true)
+        set(value) { prefs.edit { putBoolean("auto_update_check", value) } }
+
     var scheduleEnabled: Boolean
         get() = prefs.getBoolean("schedule_enabled", false)
         set(value) { prefs.edit { putBoolean("schedule_enabled", value) } }

@@ -1,12 +1,15 @@
 package com.kiowx.deepcleaner
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kiowx.deepcleaner.core.AppEntry
 import com.kiowx.deepcleaner.core.AppPreferences
 import com.kiowx.deepcleaner.core.AppRepository
+import com.kiowx.deepcleaner.core.AppUpdateInfo
+import com.kiowx.deepcleaner.core.AppUpdateRepository
 import com.kiowx.deepcleaner.core.AdvancedScanner
 import com.kiowx.deepcleaner.core.CleanItem
 import com.kiowx.deepcleaner.core.CleanProfile
@@ -54,6 +57,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class DeepCleanerUiState(
     val section: MainSection = MainSection.HOME,
@@ -81,6 +85,14 @@ data class DeepCleanerUiState(
     val rootModeEnabled: Boolean = false,
     val rootAvailable: Boolean? = null,
     val hasUsageAccess: Boolean = false,
+    val currentVersionName: String = "",
+    val autoUpdateCheck: Boolean = true,
+    val updateInfo: AppUpdateInfo? = null,
+    val updateDialogVisible: Boolean = false,
+    val updateChecking: Boolean = false,
+    val updateDownloading: Boolean = false,
+    val updateProgress: Int = 0,
+    val downloadedUpdatePath: String? = null,
     val message: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val deleteMode: DeleteMode = DeleteMode.PERMANENT,
@@ -117,7 +129,9 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
     private val vaultRepository = VaultRepository(application)
     private val configRepository = ConfigRepository(application)
     private val ruleUpdateRepository = RuleUpdateRepository(application)
+    private val appUpdateRepository = AppUpdateRepository(application)
     private var activeJob: Job? = null
+    private var updateJob: Job? = null
 
     private val _state = MutableStateFlow(
         DeepCleanerUiState(
@@ -148,6 +162,8 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
             cleanProfile = preferences.cleanProfile,
             rootModeEnabled = preferences.rootModeEnabled,
             hasUsageAccess = appRepository.hasUsageAccess(),
+            currentVersionName = appUpdateRepository.currentVersionName,
+            autoUpdateCheck = preferences.autoUpdateCheck,
         ),
     )
     val state: StateFlow<DeepCleanerUiState> = _state.asStateFlow()
@@ -161,6 +177,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                 _state.update { it.copy(trash = trashManager.list(), message = "回收站已自动释放 ${formatBytes(result.releasedBytes)}") }
             }
         }
+        if (preferences.autoUpdateCheck) checkForUpdates(silent = true)
     }
 
     fun refreshPermissionAndStorage() {
@@ -195,7 +212,6 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         if (tool == ToolKind.STORAGE_TRENDS) _state.update { it.copy(storageTrends = trendRepository.list()) }
         if (tool == ToolKind.VAULT) _state.update { it.copy(vaultEntries = vaultRepository.list()) }
         if (tool == ToolKind.RULE_UPDATES) _state.update { it.copy(ruleUpdateInfo = ruleUpdateRepository.info()) }
-        if (tool == ToolKind.ROOT_CLEANER && _state.value.rootAvailable == null) checkRootAccess()
     }
 
     fun closeTool() {
@@ -206,9 +222,9 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
     fun runQuickScan() {
         if (!requireStorageAccess()) return
         when (_state.value.cleanProfile) {
-            CleanProfile.DOWNLOADS_ONLY -> runScan("正在整理下载") { engine.scanDownloads(onProgress = it) }
-            CleanProfile.SAFE -> runScan("正在深度扫描") { onProgress -> engine.scanJunk(onProgress) }
-            CleanProfile.MAX_SPACE -> runScan("正在扫描最大释放方案") { onProgress ->
+            CleanProfile.DOWNLOADS_ONLY -> runScan("正在整理下载", includeGlobalRoot = true) { engine.scanDownloads(onProgress = it) }
+            CleanProfile.SAFE -> runScan("正在深度扫描", includeGlobalRoot = true) { onProgress -> engine.scanJunk(onProgress) }
+            CleanProfile.MAX_SPACE -> runScan("正在扫描最大释放方案", includeGlobalRoot = true) { onProgress ->
                 val report = engine.scanJunk(onProgress)
                 report.copy(items = report.items.map { item -> item.copy(selected = item.risk != com.kiowx.deepcleaner.core.CleanRisk.HIGH) })
             }
@@ -217,16 +233,11 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun runSafeScan() {
         if (!requireStorageAccess()) return
-        runScan("正在执行安全扫描") { onProgress -> engine.scanJunk(onProgress) }
+        runScan("正在执行安全扫描", includeGlobalRoot = true) { onProgress -> engine.scanJunk(onProgress) }
     }
 
     fun runActiveTool() {
         val tool = _state.value.activeTool ?: return
-        if (tool == ToolKind.ROOT_CLEANER) {
-            if (!_state.value.rootModeEnabled) return postMessage("请先开启 Root 高级模式")
-            runScan("正在读取 Root 私有缓存") { RootAccess.scanCaches(getApplication()) }
-            return
-        }
         if (tool in setOf(ToolKind.CLEAN_PROFILES, ToolKind.STORAGE_TRENDS, ToolKind.VAULT, ToolKind.CONFIG_BACKUP, ToolKind.RULE_UPDATES)) return
         if (!requireStorageAccess()) return
         when (tool) {
@@ -252,7 +263,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
             }
             ToolKind.WHITELIST, ToolKind.HISTORY, ToolKind.EXTERNAL_STORAGE, ToolKind.SYSTEM_CACHE,
             ToolKind.CLEAN_PROFILES, ToolKind.STORAGE_TRENDS, ToolKind.VAULT, ToolKind.CONFIG_BACKUP,
-            ToolKind.RULE_UPDATES, ToolKind.ROOT_CLEANER -> Unit
+            ToolKind.RULE_UPDATES -> Unit
             ToolKind.TRASH -> refreshTrash()
         }
     }
@@ -276,6 +287,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun runScan(
         title: String,
+        includeGlobalRoot: Boolean = false,
         block: suspend (suspend (ScanProgress) -> Unit) -> ScanReport,
     ) {
         activeJob?.cancel()
@@ -283,7 +295,25 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
         activeJob = viewModelScope.launch {
             try {
                 val report = withContext(Dispatchers.IO) {
-                    block { progress -> _state.update { it.copy(progress = progress) } }
+                    val baseReport = block { progress -> _state.update { it.copy(progress = progress) } }
+                    if (includeGlobalRoot && _state.value.rootModeEnabled) {
+                        runCatching {
+                            ExpansionScanner.mergeReports(baseReport, RootAccess.scanCaches(getApplication()))
+                        }.onSuccess {
+                            _state.update { state -> state.copy(rootAvailable = true) }
+                        }.map { merged ->
+                            if (_state.value.cleanProfile == CleanProfile.MAX_SPACE) {
+                                merged.copy(items = merged.items.map { item -> item.copy(selected = item.risk != com.kiowx.deepcleaner.core.CleanRisk.HIGH) })
+                            } else {
+                                merged
+                            }
+                        }.getOrElse {
+                            _state.update { state -> state.copy(rootAvailable = false) }
+                            baseReport
+                        }
+                    } else {
+                        baseReport
+                    }
                 }
                 _state.update {
                     preferences.lastScanBytes = report.items.sumOf(CleanItem::size)
@@ -467,8 +497,17 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setRootMode(enabled: Boolean) {
         preferences.rootModeEnabled = enabled
-        _state.update { it.copy(rootModeEnabled = enabled) }
+        _state.update { state ->
+            val remainingItems = if (enabled) state.items else state.items.filterNot { it.category == com.kiowx.deepcleaner.core.CleanCategory.ROOT_CACHE }
+            state.copy(
+                rootModeEnabled = enabled,
+                rootAvailable = if (enabled) state.rootAvailable else null,
+                items = remainingItems,
+                report = state.report?.copy(items = remainingItems),
+            )
+        }
         if (enabled) checkRootAccess()
+        else postMessage("Root 全局模式已关闭")
     }
 
     fun checkRootAccess() {
@@ -476,6 +515,93 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
             val available = RootAccess.isAvailable()
             _state.update { it.copy(rootAvailable = available, message = if (available) "Root 授权可用" else "未获得 Root 授权") }
         }
+    }
+
+    fun setAutoUpdateCheck(enabled: Boolean) {
+        preferences.autoUpdateCheck = enabled
+        _state.update { it.copy(autoUpdateCheck = enabled, message = if (enabled) "已开启启动时检查更新" else "已关闭启动时检查更新") }
+    }
+
+    fun checkForUpdates(silent: Boolean = false) {
+        if (updateJob?.isActive == true) return
+        _state.update { it.copy(updateChecking = true) }
+        updateJob = viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { appUpdateRepository.check() }
+            _state.update { state ->
+                result.fold(
+                    onSuccess = { info ->
+                        val sameDownload = info != null && state.updateInfo?.versionCode == info.versionCode
+                        state.copy(
+                            updateChecking = false,
+                            updateInfo = info,
+                            updateDialogVisible = info != null,
+                            downloadedUpdatePath = if (sameDownload) state.downloadedUpdatePath else null,
+                            updateProgress = if (sameDownload) state.updateProgress else 0,
+                            message = when {
+                                silent || info != null -> state.message
+                                else -> "当前已是最新版本 ${state.currentVersionName}"
+                            },
+                        )
+                    },
+                    onFailure = { error ->
+                        state.copy(
+                            updateChecking = false,
+                            message = if (silent) state.message else "检查更新失败：${error.message ?: "网络不可用"}",
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val info = _state.value.updateInfo ?: return postMessage("没有可下载的新版本")
+        if (updateJob?.isActive == true) return
+        _state.update { it.copy(updateDownloading = true, updateProgress = 0, updateDialogVisible = true) }
+        updateJob = viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                appUpdateRepository.download(info) { progress ->
+                    _state.update { it.copy(updateProgress = progress) }
+                }
+            }
+            _state.update { state ->
+                result.fold(
+                    onSuccess = { file ->
+                        state.copy(
+                            updateDownloading = false,
+                            updateProgress = 100,
+                            downloadedUpdatePath = file.absolutePath,
+                            updateDialogVisible = true,
+                            message = "更新包校验完成，请确认安装",
+                        )
+                    },
+                    onFailure = { error ->
+                        state.copy(
+                            updateDownloading = false,
+                            updateProgress = 0,
+                            downloadedUpdatePath = null,
+                            message = "下载更新失败：${error.message ?: "网络不可用"}",
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        if (_state.value.updateDownloading) return
+        _state.update { it.copy(updateDialogVisible = false) }
+    }
+
+    fun showAvailableUpdate() {
+        _state.update { state -> state.copy(updateDialogVisible = state.updateInfo != null) }
+    }
+
+    fun createUpdateInstallIntent(): Intent? {
+        val path = _state.value.downloadedUpdatePath ?: return null
+        return runCatching { appUpdateRepository.installIntent(File(path)) }
+            .onFailure { postMessage("无法打开系统安装器：${it.message}") }
+            .getOrNull()
     }
 
     fun clearStorageTrends() {
@@ -534,6 +660,7 @@ class DeepCleanerViewModel(application: Application) : AndroidViewModel(applicat
                     customRules = customRuleRepository.list(), whitelist = whitelistRepository.list(),
                     themeMode = preferences.themeMode, deleteMode = preferences.deleteMode,
                     cleanProfile = preferences.cleanProfile,
+                    autoUpdateCheck = preferences.autoUpdateCheck,
                     haptics = preferences.haptics, largeFileMb = preferences.largeFileMb,
                     scheduleEnabled = preferences.scheduleEnabled, scheduleFrequency = preferences.scheduleFrequency,
                     scheduleRequireCharging = preferences.scheduleRequireCharging,

@@ -57,8 +57,9 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 - 存储趋势：最多保存 90 个本地空间快照，用折线趋势定位异常增长
 - 文件保险箱：使用 Android Keystore 管理的 AES-256-GCM 加密文件，导入和导出前使用系统身份验证
 - 配置备份：导入或导出自定义规则、保护名单和主要设置
-- Root 高级模式：默认关闭；仅在用户主动开启并授权后扫描应用私有缓存
+- Root 全局模式：默认关闭；在设置中开启并授权后，智能扫描和自动任务会扩展到应用私有缓存
 - 签名规则更新：从项目仓库下载规则，并使用内置 RSA 公钥验证签名后启用
+- 应用更新：仅在软件启动时或设置页手动触发检查；从 GitHub Release 读取 `update.json`，下载后校验 SHA-256、应用 ID 和版本号，再交给 Android 系统安装器确认
 - 小组件增强：显示最近一次发现的可清理空间，并提供一键安全扫描
 - 自适应布局：手机使用底部导航，平板、折叠屏和桌面窗口使用侧边导航
 - Android 16：`compileSdk = 36`、`targetSdk = 36`、边到边布局和预测返回兼容
@@ -75,8 +76,9 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 3. 相似媒体、APK、隐私文件、大文件、下载内容和媒体压缩候选默认不勾选。
 4. 永久删除前显示数量和大小；媒体瘦身只生成副本，不替换原文件。
 5. Android 不允许普通应用静默清除其他应用私有数据，相关操作使用系统授权页面。
-6. Root 高级模式只接受严格匹配的 `/data/user/<id>/<package>/cache` 目录，且不会进入回收站。
+6. Root 全局模式只接受严格匹配的 `/data/user/<id>/<package>/cache` 目录，且不会进入回收站。
 7. 远程规则校验失败、格式异常或超过大小限制时不会落盘或参与扫描。
+8. 应用更新只接受本项目 GitHub Release 的 HTTPS 地址，APK 上限为 300 MB；校验失败的文件会立即删除。
 
 ## 权限
 
@@ -84,6 +86,7 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 - `QUERY_ALL_PACKAGES`：显示已安装应用和安装包版本对照
 - `PACKAGE_USAGE_STATS`：可选，由用户在系统设置中授权，用于应用大小和最后使用时间
 - `POST_NOTIFICATIONS`：可选，用于自动扫描或清理结果通知
+- `REQUEST_INSTALL_PACKAGES`：可选，仅在用户确认安装已下载更新时使用；Android 仍会显示系统安装确认
 
 ## 构建
 
@@ -100,6 +103,47 @@ Deep Cleaner 是一款面向 Android 8.0–16 的本地深度清理与存储管�
 app/build/outputs/apk/debug/app-debug.apk
 app/build/outputs/apk/release/app-release.apk
 ```
+
+## 自动发布与应用内更新
+
+工作流位于 `.github/workflows/release.yml`。向 `main` 推送应用或构建相关改动后，工作流会读取 `versionName` 并在对应 Release 尚不存在时自动创建 tag（例如 `v1.2.0`），然后执行：
+
+1. 单元测试、Lint 和 Release 构建。
+2. 使用仓库 Secrets 中的固定生产密钥签名 APK。
+3. 生成 APK SHA-256 和 `update.json`。
+4. 获取最新提交的正文，完整同步到 GitHub Release，并将正文中 `---` 之前的精简条目同步到 `update.json`。
+5. 创建或更新 GitHub Release，并上传 APK、校验文件及更新配置。
+
+提交信息建议使用以下格式；没有正文时会回退使用提交标题，手动运行工作流也可以直接填写发布说明：
+
+```text
+feat: release 1.2.0
+
+- 新增功能 A
+- 优化功能 B
+- 修复问题 C
+---
+这里可以写只展示在 GitHub Release、但不展示在应用更新弹窗中的补充说明。
+```
+
+如果当前 `versionName` 已有 Release，普通推送会跳过构建；发布新版本前必须同时递增 `versionName` 和 `versionCode`。
+
+需要在仓库 `Settings → Secrets and variables → Actions` 中添加：
+
+- `ANDROID_KEYSTORE_BASE64`：JKS/PKCS12 文件的 Base64 内容
+- `ANDROID_STORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+应用使用以下固定地址获取最新版 JSON：
+
+```text
+https://github.com/Kiowx/Deep_Cleaner/releases/latest/download/update.json
+```
+
+JSON 示例见 `update/update.example.json`，实际文件由 `tools/generate_update_manifest.py` 自动生成。自动检查默认开启，但每次应用进程启动最多检查一次；不会创建后台更新任务。手动检查入口位于设置页。
+
+生产签名密钥必须永久保存且后续版本保持一致，否则 Android 会拒绝覆盖更新。当前本地测试证书安装的版本首次切换到生产签名版本时需要卸载后重装一次。
 
 ## 项目结构
 

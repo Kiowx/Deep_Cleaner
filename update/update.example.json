@@ -1,0 +1,15 @@
+{
+  "format": "deep-cleaner-update",
+  "schemaVersion": 1,
+  "versionCode": 5,
+  "versionName": "1.2.0",
+  "minSdk": 26,
+  "apkUrl": "https://github.com/Kiowx/Deep_Cleaner/releases/download/v1.2.0/Deep-Cleaner-1.2.0-Android16-release.apk",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "changelog": [
+    "新增功能",
+    "修复已知问题"
+  ],
+  "mandatory": false,
+  "publishedAt": "2026-01-01T00:00:00Z"
+}
